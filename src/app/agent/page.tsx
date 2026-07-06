@@ -8,6 +8,7 @@ import {
   Bot,
   Building2,
   FileText,
+  FileUp,
   Loader2,
   Presentation,
   Send,
@@ -22,6 +23,7 @@ type ChatMessage = {
 };
 
 type ReportMode = "stock" | "industry" | "bp" | "roadshow";
+type FileAnalysisMode = "bp" | "roadshow" | "contract" | "research";
 
 type ReportModeConfig = {
   id: ReportMode;
@@ -67,6 +69,13 @@ const reportModes: ReportModeConfig[] = [
   },
 ];
 
+const fileAnalysisModes: Array<{ id: FileAnalysisMode; title: string }> = [
+  { id: "bp", title: "BP 风险分析" },
+  { id: "roadshow", title: "路演稿生成" },
+  { id: "contract", title: "合同审查" },
+  { id: "research", title: "研报解读" },
+];
+
 const starterPrompts = [
   "帮我搭一个分析英伟达的研究框架",
   "如何理解美联储降息对科技股的影响？",
@@ -85,16 +94,23 @@ export default function AgentPage() {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [isAnalyzingFile, setIsAnalyzingFile] = useState(false);
   const [selectedMode, setSelectedMode] = useState<ReportMode>("stock");
+  const [selectedFileMode, setSelectedFileMode] =
+    useState<FileAnalysisMode>("bp");
   const [topic, setTopic] = useState("");
   const [context, setContext] = useState("");
+  const [fileNote, setFileNote] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const activeMode =
     reportModes.find((mode) => mode.id === selectedMode) ?? reportModes[0];
-  const canSend = input.trim().length > 0 && !isSending && !isGeneratingReport;
+  const isBusy = isSending || isGeneratingReport || isAnalyzingFile;
+  const canSend = input.trim().length > 0 && !isBusy;
   const canGenerateReport =
-    topic.trim().length > 0 && !isSending && !isGeneratingReport;
+    topic.trim().length > 0 && !isBusy;
+  const canAnalyzeFile = selectedFile !== null && !isBusy;
 
   const visibleMessages = useMemo(
     () => messages.filter((message) => message.content.trim().length > 0),
@@ -103,7 +119,7 @@ export default function AgentPage() {
 
   async function sendMessage(content: string) {
     const trimmedContent = content.trim();
-    if (!trimmedContent || isSending || isGeneratingReport) return;
+    if (!trimmedContent || isBusy) return;
 
     const nextMessages: ChatMessage[] = [
       ...messages,
@@ -154,7 +170,7 @@ export default function AgentPage() {
 
   async function generateReport() {
     const trimmedTopic = topic.trim();
-    if (!trimmedTopic || isSending || isGeneratingReport) return;
+    if (!trimmedTopic || isBusy) return;
 
     const userRequest = `${activeMode.title}：${trimmedTopic}`;
     setMessages((currentMessages) => [
@@ -202,6 +218,67 @@ export default function AgentPage() {
       ]);
     } finally {
       setIsGeneratingReport(false);
+    }
+  }
+
+  async function analyzeFile() {
+    if (!selectedFile || isBusy) return;
+
+    const modeTitle =
+      fileAnalysisModes.find((mode) => mode.id === selectedFileMode)?.title ||
+      "文件分析";
+
+    setMessages((currentMessages) => [
+      ...currentMessages,
+      {
+        role: "user",
+        content: `${modeTitle}：${selectedFile.name}`,
+      },
+    ]);
+    setIsAnalyzingFile(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("mode", selectedFileMode);
+      formData.append("note", fileNote);
+      formData.append("file", selectedFile);
+
+      const response = await fetch("/api/analyze-file", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = (await response.json()) as {
+        analysis?: string;
+        error?: string;
+        extractedCharacters?: number;
+      };
+
+      const prefix =
+        typeof data.extractedCharacters === "number"
+          ? `已提取 ${data.extractedCharacters} 个字符。\n\n`
+          : "";
+
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          role: "assistant",
+          content:
+            (data.analysis ? `${prefix}${data.analysis}` : undefined) ||
+            data.error ||
+            `${modeTitle}失败，请稍后重试。`,
+        },
+      ]);
+    } catch {
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          role: "assistant",
+          content: `${modeTitle}失败，请检查文件或稍后重试。`,
+        },
+      ]);
+    } finally {
+      setIsAnalyzingFile(false);
     }
   }
 
@@ -259,7 +336,7 @@ export default function AgentPage() {
                 <button
                   key={mode.id}
                   onClick={() => setSelectedMode(mode.id)}
-                  disabled={isGeneratingReport}
+                  disabled={isBusy}
                   className={`flex h-[76px] flex-col justify-between rounded-lg border px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
                     isSelected
                       ? "border-emerald-300 bg-emerald-50 text-emerald-800"
@@ -315,6 +392,73 @@ export default function AgentPage() {
 
           <div className="mt-5 border-t border-zinc-200 pt-4">
             <div className="flex items-center gap-2">
+              <FileUp className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+              <h2 className="text-sm font-semibold text-zinc-950">文件分析</h2>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {fileAnalysisModes.map((mode) => {
+                const isSelected = mode.id === selectedFileMode;
+
+                return (
+                  <button
+                    key={mode.id}
+                    onClick={() => setSelectedFileMode(mode.id)}
+                    disabled={isBusy}
+                    className={`h-10 rounded-lg border px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                      isSelected
+                        ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                        : "border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-emerald-200 hover:bg-emerald-50"
+                    }`}
+                  >
+                    {mode.title}
+                  </button>
+                );
+              })}
+            </div>
+
+            <label className="mt-3 flex min-h-[88px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-3 py-4 text-center transition hover:border-emerald-300 hover:bg-emerald-50">
+              <FileUp className="h-5 w-5 text-zinc-500" aria-hidden="true" />
+              <span className="mt-2 text-sm font-medium text-zinc-700">
+                {selectedFile ? selectedFile.name : "选择文件"}
+              </span>
+              <span className="mt-1 text-xs text-zinc-500">
+                PDF、DOCX、PPTX、TXT、MD
+              </span>
+              <input
+                type="file"
+                accept=".pdf,.docx,.pptx,.txt,.md,.csv,.json"
+                className="sr-only"
+                onChange={(event) => {
+                  setSelectedFile(event.target.files?.[0] ?? null);
+                }}
+              />
+            </label>
+
+            <textarea
+              value={fileNote}
+              onChange={(event) => setFileNote(event.target.value)}
+              placeholder="可填写分析重点，例如风险、估值、演讲对象、合同关注条款等"
+              rows={4}
+              className="mt-3 w-full resize-none rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm leading-6 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+            />
+
+            <button
+              onClick={() => void analyzeFile()}
+              disabled={!canAnalyzeFile}
+              className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-zinc-900 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
+            >
+              {isAnalyzingFile ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <FileUp className="h-4 w-4" aria-hidden="true" />
+              )}
+              分析上传文件
+            </button>
+          </div>
+
+          <div className="mt-5 border-t border-zinc-200 pt-4">
+            <div className="flex items-center gap-2">
               <Bot className="h-4 w-4 text-zinc-500" aria-hidden="true" />
               <h2 className="text-sm font-semibold text-zinc-950">快速提问</h2>
             </div>
@@ -323,7 +467,7 @@ export default function AgentPage() {
                 <button
                   key={prompt}
                   onClick={() => void sendMessage(prompt)}
-                  disabled={isSending || isGeneratingReport}
+                  disabled={isBusy}
                   className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-left text-sm leading-6 text-zinc-700 transition hover:border-emerald-200 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {prompt}
@@ -367,9 +511,11 @@ export default function AgentPage() {
               <div className="flex justify-start">
                 <div className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  {isGeneratingReport
-                    ? `${activeMode.title}正在生成`
-                    : "阿U智能体正在思考"}
+                  {isAnalyzingFile
+                    ? "文件正在分析"
+                    : isGeneratingReport
+                      ? `${activeMode.title}正在生成`
+                      : "阿U智能体正在思考"}
                 </div>
               </div>
             ) : null}
