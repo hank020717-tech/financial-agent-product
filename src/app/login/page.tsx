@@ -6,6 +6,7 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
+  History,
   Loader2,
   LogIn,
   Mail,
@@ -271,6 +272,15 @@ export default function LoginPage() {
             <p>第一批建议保存：对话记录、生成报告、上传文件分析结果。</p>
             <p>再往后接 Supabase Storage，用来保存用户上传的原始文件。</p>
           </div>
+          {userEmail ? (
+            <Link
+              href="/history"
+              className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100"
+            >
+              <History className="h-4 w-4" aria-hidden="true" />
+              查看历史记录
+            </Link>
+          ) : null}
         </aside>
       </section>
     </main>

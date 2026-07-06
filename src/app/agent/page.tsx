@@ -12,6 +12,7 @@ import {
   Download,
   FileText,
   FileUp,
+  History,
   Loader2,
   Presentation,
   Send,
@@ -528,6 +529,16 @@ export default function AgentPage() {
             <UserRound className="h-4 w-4" aria-hidden="true" />
             {userEmail ? "用户中心" : "登录/注册"}
           </Link>
+
+          {userEmail ? (
+            <Link
+              href="/history"
+              className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-medium text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100"
+            >
+              <History className="h-4 w-4" aria-hidden="true" />
+              历史记录
+            </Link>
+          ) : null}
         </div>
       </header>
 
