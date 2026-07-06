@@ -4,10 +4,14 @@ import Link from "next/link";
 import { FormEvent, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  BarChart3,
   Bot,
+  Building2,
   FileText,
   Loader2,
+  Presentation,
   Send,
+  ShieldAlert,
   Sparkles,
   UserRound,
 } from "lucide-react";
@@ -16,6 +20,52 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
 };
+
+type ReportMode = "stock" | "industry" | "bp" | "roadshow";
+
+type ReportModeConfig = {
+  id: ReportMode;
+  title: string;
+  icon: typeof BarChart3;
+  topicLabel: string;
+  topicPlaceholder: string;
+  contextPlaceholder: string;
+};
+
+const reportModes: ReportModeConfig[] = [
+  {
+    id: "stock",
+    title: "个股分析",
+    icon: BarChart3,
+    topicLabel: "标的",
+    topicPlaceholder: "例如：NVDA、贵州茅台、特斯拉",
+    contextPlaceholder: "可填写关注点、持仓背景、财报摘要、估值疑问等",
+  },
+  {
+    id: "industry",
+    title: "行业研报",
+    icon: Building2,
+    topicLabel: "行业",
+    topicPlaceholder: "例如：AI 算力、新能源车、创新药",
+    contextPlaceholder: "可填写研究范围、重点公司、地域市场、时间周期等",
+  },
+  {
+    id: "bp",
+    title: "BP 风险分析",
+    icon: ShieldAlert,
+    topicLabel: "项目/公司",
+    topicPlaceholder: "例如：某 AI 金融助手项目",
+    contextPlaceholder: "可粘贴 BP 摘要、商业模式、收入模型、团队背景等",
+  },
+  {
+    id: "roadshow",
+    title: "路演稿生成",
+    icon: Presentation,
+    topicLabel: "项目/公司",
+    topicPlaceholder: "例如：某智能投研平台",
+    contextPlaceholder: "可粘贴路演材料要点、融资用途、产品亮点、目标听众等",
+  },
+];
 
 const starterPrompts = [
   "帮我搭一个分析英伟达的研究框架",
@@ -27,16 +77,24 @@ const starterPrompts = [
 const initialMessage: ChatMessage = {
   role: "assistant",
   content:
-    "你好，我是阿U智能体。你可以问我市场、公司、行业、商业计划书、路演稿和金融文件分析相关的问题。",
+    "你好，我是阿U智能体。你可以直接聊天，也可以使用左侧固定能力生成个股分析、行业研报、BP 风险分析和路演稿。",
 };
 
 export default function AgentPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([initialMessage]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [selectedMode, setSelectedMode] = useState<ReportMode>("stock");
+  const [topic, setTopic] = useState("");
+  const [context, setContext] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const canSend = input.trim().length > 0 && !isSending;
+  const activeMode =
+    reportModes.find((mode) => mode.id === selectedMode) ?? reportModes[0];
+  const canSend = input.trim().length > 0 && !isSending && !isGeneratingReport;
+  const canGenerateReport =
+    topic.trim().length > 0 && !isSending && !isGeneratingReport;
 
   const visibleMessages = useMemo(
     () => messages.filter((message) => message.content.trim().length > 0),
@@ -45,7 +103,7 @@ export default function AgentPage() {
 
   async function sendMessage(content: string) {
     const trimmedContent = content.trim();
-    if (!trimmedContent || isSending) return;
+    if (!trimmedContent || isSending || isGeneratingReport) return;
 
     const nextMessages: ChatMessage[] = [
       ...messages,
@@ -94,6 +152,59 @@ export default function AgentPage() {
     }
   }
 
+  async function generateReport() {
+    const trimmedTopic = topic.trim();
+    if (!trimmedTopic || isSending || isGeneratingReport) return;
+
+    const userRequest = `${activeMode.title}：${trimmedTopic}`;
+    setMessages((currentMessages) => [
+      ...currentMessages,
+      { role: "user", content: userRequest },
+    ]);
+    setIsGeneratingReport(true);
+
+    try {
+      const response = await fetch("/api/report", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mode: selectedMode,
+          topic: trimmedTopic,
+          context,
+        }),
+      });
+
+      const data = (await response.json()) as {
+        report?: string;
+        error?: string;
+        title?: string;
+      };
+
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          role: "assistant",
+          content:
+            data.report ||
+            data.error ||
+            `${activeMode.title}生成失败，请稍后重试。`,
+        },
+      ]);
+    } catch {
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          role: "assistant",
+          content: `${activeMode.title}生成失败，请检查网络或稍后重试。`,
+        },
+      ]);
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (canSend) {
@@ -132,40 +243,99 @@ export default function AgentPage() {
         </div>
       </header>
 
-      <section className="mx-auto grid w-full max-w-[1440px] gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <section className="mx-auto grid w-full max-w-[1440px] gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="h-fit rounded-lg border border-zinc-200 bg-white p-4">
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-emerald-600" aria-hidden="true" />
-            <h2 className="text-sm font-semibold text-zinc-950">研究场景</h2>
+            <h2 className="text-sm font-semibold text-zinc-950">固定能力</h2>
           </div>
 
-          <div className="mt-4 grid gap-2">
-            {starterPrompts.map((prompt) => (
-              <button
-                key={prompt}
-                onClick={() => void sendMessage(prompt)}
-                disabled={isSending}
-                className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-left text-sm leading-6 text-zinc-700 transition hover:border-emerald-200 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {prompt}
-              </button>
-            ))}
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            {reportModes.map((mode) => {
+              const Icon = mode.icon;
+              const isSelected = mode.id === selectedMode;
+
+              return (
+                <button
+                  key={mode.id}
+                  onClick={() => setSelectedMode(mode.id)}
+                  disabled={isGeneratingReport}
+                  className={`flex h-[76px] flex-col justify-between rounded-lg border px-3 py-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                    isSelected
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                      : "border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-emerald-200 hover:bg-emerald-50"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" aria-hidden="true" />
+                  <span className="text-sm font-semibold">{mode.title}</span>
+                </button>
+              );
+            })}
           </div>
 
-          <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-zinc-950">
-              <FileText className="h-4 w-4 text-zinc-500" aria-hidden="true" />
-              文件分析
+          <div className="mt-4 space-y-3">
+            <label className="block">
+              <span className="text-xs font-medium text-zinc-600">
+                {activeMode.topicLabel}
+              </span>
+              <input
+                value={topic}
+                onChange={(event) => setTopic(event.target.value)}
+                placeholder={activeMode.topicPlaceholder}
+                className="mt-1 h-10 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 text-sm outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-xs font-medium text-zinc-600">
+                补充信息
+              </span>
+              <textarea
+                value={context}
+                onChange={(event) => setContext(event.target.value)}
+                placeholder={activeMode.contextPlaceholder}
+                rows={6}
+                className="mt-1 w-full resize-none rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm leading-6 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
+              />
+            </label>
+
+            <button
+              onClick={() => void generateReport()}
+              disabled={!canGenerateReport}
+              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+            >
+              {isGeneratingReport ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <FileText className="h-4 w-4" aria-hidden="true" />
+              )}
+              生成{activeMode.title}
+            </button>
+          </div>
+
+          <div className="mt-5 border-t border-zinc-200 pt-4">
+            <div className="flex items-center gap-2">
+              <Bot className="h-4 w-4 text-zinc-500" aria-hidden="true" />
+              <h2 className="text-sm font-semibold text-zinc-950">快速提问</h2>
             </div>
-            <p className="mt-2 text-sm leading-6 text-zinc-600">
-              PPT、BP、合同和研报上传会在下一阶段接入。
-            </p>
+            <div className="mt-3 grid gap-2">
+              {starterPrompts.map((prompt) => (
+                <button
+                  key={prompt}
+                  onClick={() => void sendMessage(prompt)}
+                  disabled={isSending || isGeneratingReport}
+                  className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-left text-sm leading-6 text-zinc-700 transition hover:border-emerald-200 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
           </div>
         </aside>
 
         <section className="flex min-h-[calc(100vh-96px)] min-w-0 flex-col rounded-lg border border-zinc-200 bg-white">
           <div className="border-b border-zinc-200 px-4 py-3">
-            <p className="text-sm font-semibold text-zinc-950">对话</p>
+            <p className="text-sm font-semibold text-zinc-950">对话与报告</p>
             <p className="mt-1 text-xs text-zinc-500">
               内容仅供研究参考，不构成投资建议。
             </p>
@@ -181,7 +351,7 @@ export default function AgentPage() {
                   className={`flex ${isUser ? "justify-end" : "justify-start"}`}
                 >
                   <div
-                    className={`max-w-[860px] whitespace-pre-wrap rounded-lg px-4 py-3 text-sm leading-7 ${
+                    className={`max-w-[920px] whitespace-pre-wrap rounded-lg px-4 py-3 text-sm leading-7 ${
                       isUser
                         ? "bg-emerald-600 text-white"
                         : "border border-zinc-200 bg-zinc-50 text-zinc-800"
@@ -193,11 +363,13 @@ export default function AgentPage() {
               );
             })}
 
-            {isSending ? (
+            {isSending || isGeneratingReport ? (
               <div className="flex justify-start">
                 <div className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  阿U智能体正在思考
+                  {isGeneratingReport
+                    ? `${activeMode.title}正在生成`
+                    : "阿U智能体正在思考"}
                 </div>
               </div>
             ) : null}

@@ -1,20 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-
-type ChatMessage = {
-  role: "user" | "assistant" | "system";
-  content: string;
-};
-
-type DeepSeekChoice = {
-  finish_reason?: string;
-  message?: {
-    content?: string;
-  };
-};
-
-const deepSeekApiUrl = "https://api.deepseek.com/chat/completions";
-const maxOutputTokens = 4096;
-const maxContinuationRequests = 2;
+import {
+  ChatMessage,
+  completeWithContinuation,
+  getDeepSeekConfig,
+} from "@/lib/deepseek";
 
 const systemPrompt = `你是阿U智能体，一个面向金融市场研究的中文 AI 助手。
 你的回答要清晰、克制、结构化，优先帮助用户理解市场、公司、行业、文件和风险。
@@ -22,60 +11,18 @@ const systemPrompt = `你是阿U智能体，一个面向金融市场研究的中
 你不能承诺收益，不能给出保证性投资结论，也不能替代持牌金融顾问。
 涉及投资判断时，要明确说明这只是研究参考，不构成投资建议。`;
 
-async function callDeepSeek({
-  apiKey,
-  model,
-  messages,
-}: {
-  apiKey: string;
-  model: string;
-  messages: ChatMessage[];
-}) {
-  const response = await fetch(deepSeekApiUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.3,
-      max_tokens: maxOutputTokens,
-    }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      data?.error?.message ||
-        "DeepSeek 返回了错误，请检查 API Key、模型名称或账户额度。",
-    );
-  }
-
-  const choice = data?.choices?.[0] as DeepSeekChoice | undefined;
-  const answer = choice?.message?.content;
-
-  if (!answer) {
-    throw new Error("DeepSeek 没有返回有效回答。");
-  }
-
-  return {
-    answer,
-    finishReason: choice?.finish_reason,
-  };
-}
-
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  const model = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+  let config: ReturnType<typeof getDeepSeekConfig>;
 
-  if (!apiKey) {
+  try {
+    config = getDeepSeekConfig();
+  } catch (error) {
     return NextResponse.json(
       {
         error:
-          "DeepSeek API Key 还没有配置。请在项目根目录创建 .env.local，并设置 DEEPSEEK_API_KEY。",
+          error instanceof Error
+            ? error.message
+            : "DeepSeek API Key 还没有配置。",
       },
       { status: 500 },
     );
@@ -101,49 +48,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "请先输入一个问题。" }, { status: 400 });
   }
 
-  const recentMessages = userMessages.slice(-12);
   const conversation: ChatMessage[] = [
     { role: "system", content: systemPrompt },
-    ...recentMessages,
+    ...userMessages.slice(-12),
   ];
 
   try {
-    const firstResult = await callDeepSeek({ apiKey, model, messages: conversation });
-    const answerParts = [firstResult.answer];
-    let finishReason = firstResult.finishReason;
-
-    for (
-      let continuationCount = 0;
-      finishReason === "length" && continuationCount < maxContinuationRequests;
-      continuationCount += 1
-    ) {
-      const continuationMessages: ChatMessage[] = [
-        ...conversation,
-        { role: "assistant", content: answerParts.join("\n\n") },
-        {
-          role: "user",
-          content:
-            "你的上一条回答因为长度限制中断了。请从中断处继续，不要重复已经输出的内容，并自然补完剩余部分。",
-        },
-      ];
-
-      const continuationResult = await callDeepSeek({
-        apiKey,
-        model,
-        messages: continuationMessages,
-      });
-
-      answerParts.push(continuationResult.answer);
-      finishReason = continuationResult.finishReason;
-    }
-
-    const answer = answerParts.join("\n\n");
+    const result = await completeWithContinuation({
+      ...config,
+      messages: conversation,
+    });
 
     return NextResponse.json({
-      answer,
-      model,
-      wasContinued: answerParts.length > 1,
-      finishReason,
+      answer: result.answer,
+      model: config.model,
+      wasContinued: result.wasContinued,
+      finishReason: result.finishReason,
     });
   } catch (error) {
     return NextResponse.json(
