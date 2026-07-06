@@ -443,14 +443,22 @@ export default function AgentPage() {
     try {
       const supabase =
         userId && isSupabaseConfigured() ? createSupabaseBrowserClient() : null;
-      const uploadedFile =
-        supabase && userId
-          ? await uploadUserFile({
-              supabase,
-              userId,
-              file: selectedFile,
-            })
-          : null;
+      let uploadedFile: Awaited<ReturnType<typeof uploadUserFile>> | null = null;
+      let storageWarning = "";
+
+      if (supabase && userId) {
+        try {
+          setHistoryStatus("正在保存原文件");
+          uploadedFile = await uploadUserFile({
+            supabase,
+            userId,
+            file: selectedFile,
+          });
+        } catch (uploadError) {
+          storageWarning = `原文件暂未保存：${getSaveErrorMessage(uploadError)}`;
+          setHistoryStatus(storageWarning);
+        }
+      }
 
       const formData = new FormData();
       formData.append("mode", selectedFileMode);
@@ -469,6 +477,10 @@ export default function AgentPage() {
         knowledgeText?: string;
         title?: string;
       };
+
+      if (!response.ok || data.error) {
+        throw new Error(data.error || `${modeTitle}失败，请稍后重试。`);
+      }
 
       const prefix =
         typeof data.extractedCharacters === "number"
@@ -498,45 +510,51 @@ export default function AgentPage() {
       });
 
       if (supabase && userId && uploadedFile && data.analysis) {
-        setHistoryStatus("正在保存文件和知识库");
+        try {
+          setHistoryStatus("正在保存文件和知识库");
 
-        const analysisId = await saveFileAnalysisRecord({
-          supabase,
-          userId,
-          fileId: uploadedFile.id,
-          sessionId: savedSessionId,
-          mode: selectedFileMode,
-          title: data.title || `${modeTitle}：${selectedFile.name}`,
-          note: fileNote,
-          analysis: assistantContent,
-          extractedCharacters: data.extractedCharacters || 0,
-        });
-
-        await createKnowledgeDocumentFromText({
-          supabase,
-          userId,
-          title: data.title || `${modeTitle}：${selectedFile.name}`,
-          sourceType: "file_analysis",
-          sourceId: analysisId,
-          content: [
-            `文件名：${selectedFile.name}`,
-            `分析类型：${modeTitle}`,
-            fileNote ? `用户备注：${fileNote}` : "",
-            data.knowledgeText ? `文件提取文本：\n${data.knowledgeText}` : "",
-            `分析结果：\n${assistantContent}`,
-          ]
-            .filter(Boolean)
-            .join("\n\n"),
-          metadata: {
+          const analysisId = await saveFileAnalysisRecord({
+            supabase,
+            userId,
             fileId: uploadedFile.id,
+            sessionId: savedSessionId,
             mode: selectedFileMode,
-          },
-        });
+            title: data.title || `${modeTitle}：${selectedFile.name}`,
+            note: fileNote,
+            analysis: assistantContent,
+            extractedCharacters: data.extractedCharacters || 0,
+          });
 
-        setHistoryStatus("文件、分析和知识库已保存");
+          await createKnowledgeDocumentFromText({
+            supabase,
+            userId,
+            title: data.title || `${modeTitle}：${selectedFile.name}`,
+            sourceType: "file_analysis",
+            sourceId: analysisId,
+            content: [
+              `文件名：${selectedFile.name}`,
+              `分析类型：${modeTitle}`,
+              fileNote ? `用户备注：${fileNote}` : "",
+              data.knowledgeText ? `文件提取文本：\n${data.knowledgeText}` : "",
+              `分析结果：\n${assistantContent}`,
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+            metadata: {
+              fileId: uploadedFile.id,
+              mode: selectedFileMode,
+            },
+          });
+
+          setHistoryStatus("文件、分析和知识库已保存");
+        } catch (saveFileError) {
+          setHistoryStatus(`分析已完成，文件历史保存失败：${getSaveErrorMessage(saveFileError)}`);
+        }
+      } else if (storageWarning) {
+        setHistoryStatus(`分析已完成，${storageWarning}`);
       }
-    } catch {
-      const assistantContent = `${modeTitle}失败，请检查文件或稍后重试。`;
+    } catch (analysisError) {
+      const assistantContent = `${modeTitle}失败：${getSaveErrorMessage(analysisError)}`;
 
       setMessages((currentMessages) => [
         ...currentMessages,
