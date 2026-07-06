@@ -7,6 +7,9 @@ import {
   BarChart3,
   Bot,
   Building2,
+  Check,
+  Copy,
+  Download,
   FileText,
   FileUp,
   Loader2,
@@ -78,21 +81,22 @@ const fileAnalysisModes: Array<{ id: FileAnalysisMode; title: string }> = [
 
 const starterPrompts = [
   "黄金现在多少钱？",
-  "帮我搭一个分析英伟达的研究框架",
+  "帮我生成一份 NVDA 个股分析报告",
   "如何理解美联储降息对科技股的影响？",
   "生成一份新能源行业研究报告大纲",
-  "审查商业计划书时应该重点看哪些风险？",
+  "帮我写一个 AI 金融助手项目的路演稿",
 ];
 
 const initialMessage: ChatMessage = {
   role: "assistant",
   content:
-    "你好，我是阿U智能体。你可以直接聊天，也可以使用左侧固定能力生成个股分析、行业研报、BP 风险分析和路演稿。",
+    "你好，我是阿U智能体。你可以直接聊天，也可以直接说“生成 NVDA 个股分析报告”“黄金现在多少钱”“写一版路演稿”，我会自动判断任务并调用对应能力。",
 };
 
 export default function AgentPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([initialMessage]);
   const [input, setInput] = useState("");
+  const [copiedMessageKey, setCopiedMessageKey] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [isAnalyzingFile, setIsAnalyzingFile] = useState(false);
@@ -122,6 +126,55 @@ export default function AgentPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isSending, isGeneratingReport, isAnalyzingFile]);
+
+  function buildExportFileName(content: string, extension: "md" | "txt") {
+    const firstTitle =
+      content
+        .split("\n")
+        .find((line) => line.trim().replace(/^#+\s*/, "").length > 0)
+        ?.trim()
+        .replace(/^#+\s*/, "") || "阿U智能体报告";
+    const safeTitle = firstTitle
+      .replace(/[\\/:*?"<>|]/g, "")
+      .replace(/\s+/g, "-")
+      .slice(0, 36);
+    const date = new Date().toISOString().slice(0, 10);
+
+    return `${safeTitle || "阿U智能体报告"}-${date}.${extension}`;
+  }
+
+  async function copyMessage(content: string, messageKey: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessageKey(messageKey);
+      window.setTimeout(() => setCopiedMessageKey(""), 1600);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = content;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+      setCopiedMessageKey(messageKey);
+      window.setTimeout(() => setCopiedMessageKey(""), 1600);
+    }
+  }
+
+  function downloadMessage(content: string, extension: "md" | "txt") {
+    const mimeType = extension === "md" ? "text/markdown" : "text/plain";
+    const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = buildExportFileName(content, extension);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
 
   async function sendMessage(content: string) {
     const trimmedContent = content.trim();
@@ -494,20 +547,57 @@ export default function AgentPage() {
           <div className="flex-1 space-y-4 overflow-auto p-4">
             {visibleMessages.map((message, index) => {
               const isUser = message.role === "user";
+              const messageKey = `${message.role}-${index}`;
+              const isCopied = copiedMessageKey === messageKey;
 
               return (
                 <div
-                  key={`${message.role}-${index}`}
+                  key={messageKey}
                   className={`flex ${isUser ? "justify-end" : "justify-start"}`}
                 >
                   <div
-                    className={`max-w-[920px] whitespace-pre-wrap rounded-lg px-4 py-3 text-sm leading-7 ${
+                    className={`group max-w-[920px] rounded-lg px-4 py-3 text-sm leading-7 ${
                       isUser
-                        ? "bg-emerald-600 text-white"
+                        ? "whitespace-pre-wrap bg-emerald-600 text-white"
                         : "border border-zinc-200 bg-zinc-50 text-zinc-800"
                     }`}
                   >
-                    {message.content}
+                    {!isUser ? (
+                      <div className="mb-3 flex items-center justify-end gap-2 border-b border-zinc-200 pb-2">
+                        <button
+                          type="button"
+                          onClick={() => void copyMessage(message.content, messageKey)}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                          title="复制全文"
+                        >
+                          {isCopied ? (
+                            <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                          )}
+                          {isCopied ? "已复制" : "复制"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadMessage(message.content, "md")}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                          title="导出 Markdown"
+                        >
+                          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                          MD
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadMessage(message.content, "txt")}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                          title="导出 TXT"
+                        >
+                          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                          TXT
+                        </button>
+                      </div>
+                    ) : null}
+                    <div className="whitespace-pre-wrap">{message.content}</div>
                   </div>
                 </div>
               );
@@ -521,7 +611,7 @@ export default function AgentPage() {
                     ? "文件正在分析"
                     : isGeneratingReport
                       ? `${activeMode.title}正在生成`
-                      : "阿U智能体正在思考"}
+                      : "阿U正在识别任务并调用能力"}
                 </div>
               </div>
             ) : null}
