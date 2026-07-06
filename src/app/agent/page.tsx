@@ -372,10 +372,13 @@ export default function AgentPage() {
             </div>
           </div>
 
-          <button className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
+          <Link
+            href="/login"
+            className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+          >
             <UserRound className="h-4 w-4" aria-hidden="true" />
             登录/注册
-          </button>
+          </Link>
         </div>
       </header>
 
