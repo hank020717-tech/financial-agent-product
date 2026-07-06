@@ -57,6 +57,16 @@ function preview(text: string) {
   return text.replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message?: unknown }).message);
+  }
+
+  return "读取历史记录失败，请稍后再试。";
+}
+
 export default function HistoryPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("sessions");
   const [userEmail, setUserEmail] = useState("");
@@ -142,11 +152,7 @@ export default function HistoryPage() {
         setSelectedSessionId(nextSessions[0]?.id ?? "");
         setSelectedReportId(nextReports[0]?.id ?? "");
       } catch (historyError) {
-        setError(
-          historyError instanceof Error
-            ? historyError.message
-            : "读取历史记录失败，请稍后再试。",
-        );
+        setError(getErrorMessage(historyError));
       } finally {
         setIsLoading(false);
       }

@@ -213,6 +213,16 @@ export default function AgentPage() {
     return intent === "stock" || intent === "industry" || intent === "bp" || intent === "roadshow";
   }
 
+  function getSaveErrorMessage(error: unknown) {
+    if (error instanceof Error) return error.message;
+
+    if (error && typeof error === "object" && "message" in error) {
+      return String((error as { message?: unknown }).message);
+    }
+
+    return "请确认 Supabase 数据表已创建并授权";
+  }
+
   async function saveTurn({
     userContent,
     assistantContent,
@@ -258,8 +268,8 @@ export default function AgentPage() {
 
       setConversationId(savedSessionId);
       setHistoryStatus("已保存");
-    } catch {
-      setHistoryStatus("保存失败，请确认 Supabase 数据表已创建");
+    } catch (saveError) {
+      setHistoryStatus(`保存失败：${getSaveErrorMessage(saveError)}`);
     }
   }
 

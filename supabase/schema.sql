@@ -31,6 +31,11 @@ alter table public.chat_sessions enable row level security;
 alter table public.chat_messages enable row level security;
 alter table public.reports enable row level security;
 
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.chat_sessions to authenticated;
+grant select, insert, update, delete on public.chat_messages to authenticated;
+grant select, insert, update, delete on public.reports to authenticated;
+
 drop policy if exists "Users can read own chat sessions" on public.chat_sessions;
 create policy "Users can read own chat sessions"
 on public.chat_sessions for select
