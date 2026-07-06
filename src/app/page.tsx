@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Search, Star, UserRound } from "lucide-react";
+import { Bot, ChevronRight, Search, Star, UserRound } from "lucide-react";
 
 type MarketInstrument = {
   name: string;
@@ -227,6 +228,14 @@ export default function Home() {
               className="h-10 w-full rounded-lg border border-zinc-200 bg-zinc-50 pl-10 pr-4 text-sm outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"
             />
           </div>
+
+          <Link
+            href="/agent"
+            className="hidden h-10 shrink-0 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-medium text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100 sm:inline-flex"
+          >
+            <Bot className="h-4 w-4" aria-hidden="true" />
+            阿U智能体
+          </Link>
 
           <button className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50">
             <UserRound className="h-4 w-4" aria-hidden="true" />

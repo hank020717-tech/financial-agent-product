@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "市场行情",
-  description: "实时市场行情页面",
+  title: "金融行情与阿U智能体",
+  description: "实时市场行情与 DeepSeek 金融研究智能体",
 };
 
 export default function RootLayout({
