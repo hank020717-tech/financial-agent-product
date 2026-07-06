@@ -1,7 +1,10 @@
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import JSZip from "jszip";
 import { PDFParse } from "pdf-parse";
 
 const maxExtractedCharacters = 60000;
+const require = createRequire(import.meta.url);
 
 function normalizeText(text: string) {
   return text
@@ -53,6 +56,9 @@ async function extractPptx(buffer: Buffer) {
 }
 
 async function extractPdf(buffer: Buffer) {
+  const workerPath = require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  PDFParse.setWorker(pathToFileURL(workerPath).toString());
+
   const parser = new PDFParse({ data: buffer });
 
   try {

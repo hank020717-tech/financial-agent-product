@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   BarChart3,
@@ -103,6 +103,7 @@ export default function AgentPage() {
   const [fileNote, setFileNote] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const activeMode =
     reportModes.find((mode) => mode.id === selectedMode) ?? reportModes[0];
@@ -116,6 +117,10 @@ export default function AgentPage() {
     () => messages.filter((message) => message.content.trim().length > 0),
     [messages],
   );
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, isSending, isGeneratingReport, isAnalyzingFile]);
 
   async function sendMessage(content: string) {
     const trimmedContent = content.trim();
@@ -507,7 +512,7 @@ export default function AgentPage() {
               );
             })}
 
-            {isSending || isGeneratingReport ? (
+            {isBusy ? (
               <div className="flex justify-start">
                 <div className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -519,6 +524,8 @@ export default function AgentPage() {
                 </div>
               </div>
             ) : null}
+
+            <div ref={messagesEndRef} />
           </div>
 
           <form onSubmit={handleSubmit} className="border-t border-zinc-200 p-4">
