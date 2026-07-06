@@ -52,6 +52,11 @@ on public.chat_sessions for update
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
 
+drop policy if exists "Users can delete own chat sessions" on public.chat_sessions;
+create policy "Users can delete own chat sessions"
+on public.chat_sessions for delete
+using (auth.uid() = user_id);
+
 drop policy if exists "Users can read own chat messages" on public.chat_messages;
 create policy "Users can read own chat messages"
 on public.chat_messages for select
@@ -62,6 +67,11 @@ create policy "Users can insert own chat messages"
 on public.chat_messages for insert
 with check (auth.uid() = user_id);
 
+drop policy if exists "Users can delete own chat messages" on public.chat_messages;
+create policy "Users can delete own chat messages"
+on public.chat_messages for delete
+using (auth.uid() = user_id);
+
 drop policy if exists "Users can read own reports" on public.reports;
 create policy "Users can read own reports"
 on public.reports for select
@@ -71,6 +81,11 @@ drop policy if exists "Users can insert own reports" on public.reports;
 create policy "Users can insert own reports"
 on public.reports for insert
 with check (auth.uid() = user_id);
+
+drop policy if exists "Users can delete own reports" on public.reports;
+create policy "Users can delete own reports"
+on public.reports for delete
+using (auth.uid() = user_id);
 
 create index if not exists chat_sessions_user_updated_idx
 on public.chat_sessions(user_id, updated_at desc);

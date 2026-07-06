@@ -5,10 +5,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   CalendarClock,
+  Check,
+  Copy,
+  Download,
   FileText,
   History,
   Loader2,
   MessageSquareText,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import {
@@ -67,6 +71,33 @@ function getErrorMessage(error: unknown) {
   return "读取历史记录失败，请稍后再试。";
 }
 
+function buildFileName(title: string, extension: "md" | "txt") {
+  const safeTitle = (title || "阿U历史记录")
+    .replace(/[\\/:*?"<>|]/g, "")
+    .replace(/\s+/g, "-")
+    .slice(0, 36);
+  const date = new Date().toISOString().slice(0, 10);
+
+  return `${safeTitle || "阿U历史记录"}-${date}.${extension}`;
+}
+
+function buildSessionExportContent({
+  title,
+  messages,
+}: {
+  title: string;
+  messages: ChatMessage[];
+}) {
+  const body = messages
+    .map((message) => {
+      const role = message.role === "user" ? "用户" : "阿U";
+      return `## ${role}\n\n${message.content}`;
+    })
+    .join("\n\n");
+
+  return `# ${title || "历史对话"}\n\n${body}`;
+}
+
 export default function HistoryPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("sessions");
   const [userEmail, setUserEmail] = useState("");
@@ -76,6 +107,9 @@ export default function HistoryPage() {
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const [selectedReportId, setSelectedReportId] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [copiedKey, setCopiedKey] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
   const [error, setError] = useState("");
 
   const selectedSession = sessions.find(
@@ -161,6 +195,124 @@ export default function HistoryPage() {
     void loadHistory();
   }, []);
 
+  async function copyText(content: string, key: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = content;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+
+    setCopiedKey(key);
+    window.setTimeout(() => setCopiedKey(""), 1600);
+  }
+
+  function downloadText({
+    content,
+    title,
+    extension,
+  }: {
+    content: string;
+    title: string;
+    extension: "md" | "txt";
+  }) {
+    const mimeType = extension === "md" ? "text/markdown" : "text/plain";
+    const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = buildFileName(title, extension);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  async function deleteSession(sessionId: string) {
+    const targetSession = sessions.find((session) => session.id === sessionId);
+    if (!targetSession || isDeleting) return;
+
+    const confirmed = window.confirm(
+      `确定删除这条历史对话吗？\n\n${targetSession.title}`,
+    );
+
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    setActionMessage("");
+    setError("");
+
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { error: deleteError } = await supabase
+        .from("chat_sessions")
+        .delete()
+        .eq("id", sessionId);
+
+      if (deleteError) throw deleteError;
+
+      const nextSessions = sessions.filter((session) => session.id !== sessionId);
+      const nextMessages = messages.filter(
+        (message) => message.session_id !== sessionId,
+      );
+
+      setSessions(nextSessions);
+      setMessages(nextMessages);
+      setSelectedSessionId((currentId) =>
+        currentId === sessionId ? nextSessions[0]?.id ?? "" : currentId,
+      );
+      setActionMessage("历史对话已删除。");
+    } catch (deleteError) {
+      setError(getErrorMessage(deleteError));
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  async function deleteReport(reportId: string) {
+    const targetReport = reports.find((report) => report.id === reportId);
+    if (!targetReport || isDeleting) return;
+
+    const confirmed = window.confirm(
+      `确定删除这份报告吗？\n\n${targetReport.title}`,
+    );
+
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    setActionMessage("");
+    setError("");
+
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { error: deleteError } = await supabase
+        .from("reports")
+        .delete()
+        .eq("id", reportId);
+
+      if (deleteError) throw deleteError;
+
+      const nextReports = reports.filter((report) => report.id !== reportId);
+
+      setReports(nextReports);
+      setSelectedReportId((currentId) =>
+        currentId === reportId ? nextReports[0]?.id ?? "" : currentId,
+      );
+      setActionMessage("报告已删除。");
+    } catch (deleteError) {
+      setError(getErrorMessage(deleteError));
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[#f6f8fb] text-zinc-950">
       <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white/95 backdrop-blur">
@@ -237,6 +389,12 @@ export default function HistoryPage() {
             </div>
           ) : null}
 
+          {actionMessage ? (
+            <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm leading-6 text-emerald-700">
+              {actionMessage}
+            </div>
+          ) : null}
+
           {!isLoading && !error && viewMode === "sessions" ? (
             <div className="mt-4 grid gap-2">
               {sessions.length === 0 ? (
@@ -252,28 +410,41 @@ export default function HistoryPage() {
                 );
 
                 return (
-                  <button
+                  <div
                     key={session.id}
-                    type="button"
-                    onClick={() => setSelectedSessionId(session.id)}
                     className={`rounded-lg border px-3 py-3 text-left transition ${
                       isSelected
                         ? "border-emerald-300 bg-emerald-50"
                         : "border-zinc-200 bg-zinc-50 hover:border-emerald-200 hover:bg-emerald-50"
                     }`}
                   >
-                    <span className="flex items-center justify-between gap-3">
-                      <span className="truncate text-sm font-semibold text-zinc-900">
-                        {session.title}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSessionId(session.id)}
+                      className="block w-full text-left"
+                    >
+                      <span className="flex items-center justify-between gap-3">
+                        <span className="truncate text-sm font-semibold text-zinc-900">
+                          {session.title}
+                        </span>
+                        <span className="shrink-0 text-xs text-zinc-500">
+                          {formatDate(session.updated_at)}
+                        </span>
                       </span>
-                      <span className="shrink-0 text-xs text-zinc-500">
-                        {formatDate(session.updated_at)}
+                      <span className="mt-1 block truncate text-xs text-zinc-500">
+                        {firstMessage ? preview(firstMessage.content) : "暂无消息"}
                       </span>
-                    </span>
-                    <span className="mt-1 block truncate text-xs text-zinc-500">
-                      {firstMessage ? preview(firstMessage.content) : "暂无消息"}
-                    </span>
-                  </button>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void deleteSession(session.id)}
+                      disabled={isDeleting}
+                      className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      删除
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -291,28 +462,41 @@ export default function HistoryPage() {
                 const isSelected = report.id === selectedReportId;
 
                 return (
-                  <button
+                  <div
                     key={report.id}
-                    type="button"
-                    onClick={() => setSelectedReportId(report.id)}
                     className={`rounded-lg border px-3 py-3 text-left transition ${
                       isSelected
                         ? "border-emerald-300 bg-emerald-50"
                         : "border-zinc-200 bg-zinc-50 hover:border-emerald-200 hover:bg-emerald-50"
                     }`}
                   >
-                    <span className="flex items-center justify-between gap-3">
-                      <span className="truncate text-sm font-semibold text-zinc-900">
-                        {report.title}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedReportId(report.id)}
+                      className="block w-full text-left"
+                    >
+                      <span className="flex items-center justify-between gap-3">
+                        <span className="truncate text-sm font-semibold text-zinc-900">
+                          {report.title}
+                        </span>
+                        <span className="shrink-0 text-xs text-zinc-500">
+                          {formatDate(report.created_at)}
+                        </span>
                       </span>
-                      <span className="shrink-0 text-xs text-zinc-500">
-                        {formatDate(report.created_at)}
+                      <span className="mt-1 block truncate text-xs text-zinc-500">
+                        {report.report_type} · {preview(report.content)}
                       </span>
-                    </span>
-                    <span className="mt-1 block truncate text-xs text-zinc-500">
-                      {report.report_type} · {preview(report.content)}
-                    </span>
-                  </button>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void deleteReport(report.id)}
+                      disabled={isDeleting}
+                      className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      删除
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -333,10 +517,66 @@ export default function HistoryPage() {
                   </p>
                 </div>
                 {selectedSession ? (
-                  <p className="mt-1 flex items-center gap-1 text-xs text-zinc-500">
-                    <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
-                    {formatDate(selectedSession.updated_at)}
-                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <p className="mr-auto flex items-center gap-1 text-xs text-zinc-500">
+                      <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
+                      {formatDate(selectedSession.updated_at)}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void copyText(
+                          buildSessionExportContent({
+                            title: selectedSession.title,
+                            messages: selectedSessionMessages,
+                          }),
+                          `session-${selectedSession.id}`,
+                        )
+                      }
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                    >
+                      {copiedKey === `session-${selectedSession.id}` ? (
+                        <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                      )}
+                      {copiedKey === `session-${selectedSession.id}` ? "已复制" : "复制"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadText({
+                          content: buildSessionExportContent({
+                            title: selectedSession.title,
+                            messages: selectedSessionMessages,
+                          }),
+                          title: selectedSession.title,
+                          extension: "md",
+                        })
+                      }
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                    >
+                      <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                      MD
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadText({
+                          content: buildSessionExportContent({
+                            title: selectedSession.title,
+                            messages: selectedSessionMessages,
+                          }),
+                          title: selectedSession.title,
+                          extension: "txt",
+                        })
+                      }
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                    >
+                      <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                      TXT
+                    </button>
+                  </div>
                 ) : null}
               </div>
 
@@ -382,10 +622,57 @@ export default function HistoryPage() {
                   </p>
                 </div>
                 {selectedReport ? (
-                  <p className="mt-1 text-xs text-zinc-500">
-                    {selectedReport.report_type} ·{" "}
-                    {formatDate(selectedReport.created_at)}
-                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <p className="mr-auto text-xs text-zinc-500">
+                      {selectedReport.report_type} ·{" "}
+                      {formatDate(selectedReport.created_at)}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void copyText(
+                          selectedReport.content,
+                          `report-${selectedReport.id}`,
+                        )
+                      }
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                    >
+                      {copiedKey === `report-${selectedReport.id}` ? (
+                        <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                      )}
+                      {copiedKey === `report-${selectedReport.id}` ? "已复制" : "复制"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadText({
+                          content: selectedReport.content,
+                          title: selectedReport.title,
+                          extension: "md",
+                        })
+                      }
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                    >
+                      <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                      MD
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadText({
+                          content: selectedReport.content,
+                          title: selectedReport.title,
+                          extension: "txt",
+                        })
+                      }
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                    >
+                      <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                      TXT
+                    </button>
+                  </div>
                 ) : null}
               </div>
 
