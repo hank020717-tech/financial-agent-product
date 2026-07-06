@@ -19,6 +19,11 @@ import {
   Sparkles,
   UserRound,
 } from "lucide-react";
+import {
+  createSupabaseBrowserClient,
+  isSupabaseConfigured,
+} from "@/lib/supabase/client";
+import { saveConversationTurn } from "@/lib/supabase/history";
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -27,6 +32,7 @@ type ChatMessage = {
 
 type ReportMode = "stock" | "industry" | "bp" | "roadshow";
 type FileAnalysisMode = "bp" | "roadshow" | "contract" | "research";
+type AgentIntent = ReportMode | "quote" | "chat";
 
 type ReportModeConfig = {
   id: ReportMode;
@@ -97,6 +103,10 @@ export default function AgentPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([initialMessage]);
   const [input, setInput] = useState("");
   const [copiedMessageKey, setCopiedMessageKey] = useState("");
+  const [userId, setUserId] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [historyStatus, setHistoryStatus] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [isAnalyzingFile, setIsAnalyzingFile] = useState(false);
@@ -126,6 +136,28 @@ export default function AgentPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isSending, isGeneratingReport, isAnalyzingFile]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
+    const supabase = createSupabaseBrowserClient();
+
+    supabase.auth.getUser().then(({ data }) => {
+      setUserId(data.user?.id ?? "");
+      setUserEmail(data.user?.email ?? "");
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user.id ?? "");
+      setUserEmail(session?.user.email ?? "");
+      setConversationId(null);
+      setHistoryStatus("");
+    });
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, []);
 
   function buildExportFileName(content: string, extension: "md" | "txt") {
     const firstTitle =
@@ -176,6 +208,60 @@ export default function AgentPage() {
     URL.revokeObjectURL(url);
   }
 
+  function isReportIntent(intent?: string): intent is ReportMode {
+    return intent === "stock" || intent === "industry" || intent === "bp" || intent === "roadshow";
+  }
+
+  async function saveTurn({
+    userContent,
+    assistantContent,
+    intent,
+    reportTitle,
+    reportType,
+    source,
+  }: {
+    userContent: string;
+    assistantContent: string;
+    intent?: AgentIntent | string;
+    reportTitle?: string;
+    reportType?: string;
+    source: string;
+  }) {
+    if (!userId || !isSupabaseConfigured()) return;
+
+    setHistoryStatus("正在保存到你的账户");
+
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const savedSessionId = await saveConversationTurn({
+        supabase,
+        userId,
+        sessionId: conversationId,
+        titleSeed: userContent,
+        userContent,
+        assistantContent,
+        metadata: {
+          intent,
+          source,
+        },
+        report:
+          reportTitle && reportType
+            ? {
+                title: reportTitle,
+                type: reportType,
+                content: assistantContent,
+                source,
+              }
+            : undefined,
+      });
+
+      setConversationId(savedSessionId);
+      setHistoryStatus("已保存");
+    } catch {
+      setHistoryStatus("保存失败，请确认 Supabase 数据表已创建");
+    }
+  }
+
   async function sendMessage(content: string) {
     const trimmedContent = content.trim();
     if (!trimmedContent || isBusy) return;
@@ -201,26 +287,49 @@ export default function AgentPage() {
       const data = (await response.json()) as {
         answer?: string;
         error?: string;
+        intent?: AgentIntent;
+        title?: string;
+        toolUsed?: string;
       };
+
+      const assistantContent =
+        data.answer ||
+        data.error ||
+        "阿U智能体暂时没有返回内容，请稍后再试。";
 
       setMessages((currentMessages) => [
         ...currentMessages,
         {
           role: "assistant",
-          content:
-            data.answer ||
-            data.error ||
-            "阿U智能体暂时没有返回内容，请稍后再试。",
+          content: assistantContent,
         },
       ]);
+
+      void saveTurn({
+        userContent: trimmedContent,
+        assistantContent,
+        intent: data.intent,
+        reportTitle: data.title,
+        reportType: isReportIntent(data.intent) ? data.intent : undefined,
+        source: data.toolUsed || "chat",
+      });
     } catch {
+      const assistantContent = "连接智能体失败，请检查网络或稍后重试。";
+
       setMessages((currentMessages) => [
         ...currentMessages,
         {
           role: "assistant",
-          content: "连接智能体失败，请检查网络或稍后重试。",
+          content: assistantContent,
         },
       ]);
+
+      void saveTurn({
+        userContent: trimmedContent,
+        assistantContent,
+        intent: "chat",
+        source: "chat-error",
+      });
     } finally {
       setIsSending(false);
       inputRef.current?.focus();
@@ -257,24 +366,44 @@ export default function AgentPage() {
         title?: string;
       };
 
+      const assistantContent =
+        data.report ||
+        data.error ||
+        `${activeMode.title}生成失败，请稍后重试。`;
+
       setMessages((currentMessages) => [
         ...currentMessages,
         {
           role: "assistant",
-          content:
-            data.report ||
-            data.error ||
-            `${activeMode.title}生成失败，请稍后重试。`,
+          content: assistantContent,
         },
       ]);
+
+      void saveTurn({
+        userContent: userRequest,
+        assistantContent,
+        intent: selectedMode,
+        reportTitle: data.title || `${activeMode.title}：${trimmedTopic}`,
+        reportType: selectedMode,
+        source: "fixed-report",
+      });
     } catch {
+      const assistantContent = `${activeMode.title}生成失败，请检查网络或稍后重试。`;
+
       setMessages((currentMessages) => [
         ...currentMessages,
         {
           role: "assistant",
-          content: `${activeMode.title}生成失败，请检查网络或稍后重试。`,
+          content: assistantContent,
         },
       ]);
+
+      void saveTurn({
+        userContent: userRequest,
+        assistantContent,
+        intent: selectedMode,
+        source: "fixed-report-error",
+      });
     } finally {
       setIsGeneratingReport(false);
     }
@@ -318,24 +447,44 @@ export default function AgentPage() {
           ? `已提取 ${data.extractedCharacters} 个字符。\n\n`
           : "";
 
+      const assistantContent =
+        (data.analysis ? `${prefix}${data.analysis}` : undefined) ||
+        data.error ||
+        `${modeTitle}失败，请稍后重试。`;
+
       setMessages((currentMessages) => [
         ...currentMessages,
         {
           role: "assistant",
-          content:
-            (data.analysis ? `${prefix}${data.analysis}` : undefined) ||
-            data.error ||
-            `${modeTitle}失败，请稍后重试。`,
+          content: assistantContent,
         },
       ]);
+
+      void saveTurn({
+        userContent: `${modeTitle}：${selectedFile.name}`,
+        assistantContent,
+        intent: selectedFileMode,
+        reportTitle: `${modeTitle}：${selectedFile.name}`,
+        reportType: `file-${selectedFileMode}`,
+        source: "file-analysis",
+      });
     } catch {
+      const assistantContent = `${modeTitle}失败，请检查文件或稍后重试。`;
+
       setMessages((currentMessages) => [
         ...currentMessages,
         {
           role: "assistant",
-          content: `${modeTitle}失败，请检查文件或稍后重试。`,
+          content: assistantContent,
         },
       ]);
+
+      void saveTurn({
+        userContent: `${modeTitle}：${selectedFile.name}`,
+        assistantContent,
+        intent: selectedFileMode,
+        source: "file-analysis-error",
+      });
     } finally {
       setIsAnalyzingFile(false);
     }
@@ -377,7 +526,7 @@ export default function AgentPage() {
             className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
           >
             <UserRound className="h-4 w-4" aria-hidden="true" />
-            登录/注册
+            {userEmail ? "用户中心" : "登录/注册"}
           </Link>
         </div>
       </header>
@@ -544,6 +693,9 @@ export default function AgentPage() {
             <p className="text-sm font-semibold text-zinc-950">对话与报告</p>
             <p className="mt-1 text-xs text-zinc-500">
               内容仅供研究参考，不构成投资建议。
+              {userEmail
+                ? ` 已登录：${userEmail}${historyStatus ? ` · ${historyStatus}` : ""}`
+                : " 登录后会自动保存对话和报告。"}
             </p>
           </div>
 
