@@ -1,10 +1,13 @@
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import JSZip from "jszip";
-import { PDFParse } from "pdf-parse";
 
 const maxExtractedCharacters = 60000;
-const require = createRequire(import.meta.url);
+const execFileAsync = promisify(execFile);
 
 function normalizeText(text: string) {
   return text
@@ -56,16 +59,25 @@ async function extractPptx(buffer: Buffer) {
 }
 
 async function extractPdf(buffer: Buffer) {
-  const workerPath = require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
-  PDFParse.setWorker(pathToFileURL(workerPath).toString());
-
-  const parser = new PDFParse({ data: buffer });
+  const tempDir = await mkdtemp(join(tmpdir(), "agent-pdf-"));
+  const tempFile = join(tempDir, `${randomUUID()}.pdf`);
 
   try {
-    const data = await parser.getText();
-    return normalizeText(data.text || "");
+    await writeFile(tempFile, buffer);
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [join(process.cwd(), "scripts", "extract-pdf.mjs"), tempFile],
+      {
+        maxBuffer: 1024 * 1024 * 20,
+        timeout: 120000,
+      },
+    );
+
+    const result = JSON.parse(stdout) as { text?: string };
+    return normalizeText(result.text || "");
   } finally {
-    await parser.destroy();
+    await rm(tempDir, { recursive: true, force: true });
   }
 }
 
