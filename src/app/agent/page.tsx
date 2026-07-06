@@ -77,6 +77,7 @@ const fileAnalysisModes: Array<{ id: FileAnalysisMode; title: string }> = [
 ];
 
 const starterPrompts = [
+  "黄金现在多少钱？",
   "帮我搭一个分析英伟达的研究框架",
   "如何理解美联储降息对科技股的影响？",
   "生成一份新能源行业研究报告大纲",
