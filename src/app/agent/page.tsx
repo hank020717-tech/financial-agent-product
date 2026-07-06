@@ -24,7 +24,9 @@ import {
   createSupabaseBrowserClient,
   isSupabaseConfigured,
 } from "@/lib/supabase/client";
+import { uploadUserFile, saveFileAnalysisRecord } from "@/lib/supabase/files";
 import { saveConversationTurn } from "@/lib/supabase/history";
+import { createKnowledgeDocumentFromText } from "@/lib/supabase/knowledge";
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -237,8 +239,8 @@ export default function AgentPage() {
     reportTitle?: string;
     reportType?: string;
     source: string;
-  }) {
-    if (!userId || !isSupabaseConfigured()) return;
+  }): Promise<string | null> {
+    if (!userId || !isSupabaseConfigured()) return null;
 
     setHistoryStatus("正在保存到你的账户");
 
@@ -268,8 +270,10 @@ export default function AgentPage() {
 
       setConversationId(savedSessionId);
       setHistoryStatus("已保存");
+      return savedSessionId;
     } catch (saveError) {
       setHistoryStatus(`保存失败：${getSaveErrorMessage(saveError)}`);
+      return null;
     }
   }
 
@@ -437,6 +441,17 @@ export default function AgentPage() {
     setIsAnalyzingFile(true);
 
     try {
+      const supabase =
+        userId && isSupabaseConfigured() ? createSupabaseBrowserClient() : null;
+      const uploadedFile =
+        supabase && userId
+          ? await uploadUserFile({
+              supabase,
+              userId,
+              file: selectedFile,
+            })
+          : null;
+
       const formData = new FormData();
       formData.append("mode", selectedFileMode);
       formData.append("note", fileNote);
@@ -451,6 +466,8 @@ export default function AgentPage() {
         analysis?: string;
         error?: string;
         extractedCharacters?: number;
+        knowledgeText?: string;
+        title?: string;
       };
 
       const prefix =
@@ -471,7 +488,7 @@ export default function AgentPage() {
         },
       ]);
 
-      void saveTurn({
+      const savedSessionId = await saveTurn({
         userContent: `${modeTitle}：${selectedFile.name}`,
         assistantContent,
         intent: selectedFileMode,
@@ -479,6 +496,45 @@ export default function AgentPage() {
         reportType: `file-${selectedFileMode}`,
         source: "file-analysis",
       });
+
+      if (supabase && userId && uploadedFile && data.analysis) {
+        setHistoryStatus("正在保存文件和知识库");
+
+        const analysisId = await saveFileAnalysisRecord({
+          supabase,
+          userId,
+          fileId: uploadedFile.id,
+          sessionId: savedSessionId,
+          mode: selectedFileMode,
+          title: data.title || `${modeTitle}：${selectedFile.name}`,
+          note: fileNote,
+          analysis: assistantContent,
+          extractedCharacters: data.extractedCharacters || 0,
+        });
+
+        await createKnowledgeDocumentFromText({
+          supabase,
+          userId,
+          title: data.title || `${modeTitle}：${selectedFile.name}`,
+          sourceType: "file_analysis",
+          sourceId: analysisId,
+          content: [
+            `文件名：${selectedFile.name}`,
+            `分析类型：${modeTitle}`,
+            fileNote ? `用户备注：${fileNote}` : "",
+            data.knowledgeText ? `文件提取文本：\n${data.knowledgeText}` : "",
+            `分析结果：\n${assistantContent}`,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+          metadata: {
+            fileId: uploadedFile.id,
+            mode: selectedFileMode,
+          },
+        });
+
+        setHistoryStatus("文件、分析和知识库已保存");
+      }
     } catch {
       const assistantContent = `${modeTitle}失败，请检查文件或稍后重试。`;
 

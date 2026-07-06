@@ -151,6 +151,7 @@ export async function POST(request: NextRequest) {
       title: `${modeLabels[mode]}：${file.name}`,
       analysis: result.answer,
       extractedCharacters: extractedText.length,
+      knowledgeText: extractedText.slice(0, 60000),
       model: config.model,
       wasContinued: result.wasContinued,
       finishReason: result.finishReason,
