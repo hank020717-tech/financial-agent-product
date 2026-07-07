@@ -7,6 +7,12 @@ import {
 import { resolveAgentIntent } from "@/lib/agent-router";
 import { generateStructuredReport, reportTemplates } from "@/lib/reports";
 import {
+  hasKnowledgeQuestionIntent,
+  RetrievedKnowledgeChunk,
+  searchKnowledgeChunks,
+} from "@/lib/supabase/knowledge";
+import { createSupabaseUserClient } from "@/lib/supabase/server";
+import {
   fetchTwelveDataQuote,
   formatQuoteForPrompt,
   hasRealtimeQuoteIntent,
@@ -16,6 +22,8 @@ import {
 const systemPrompt = `你是阿U智能体，一个面向金融市场研究的中文 AI 助手。你的回答要清晰、克制、结构化，优先帮助用户理解市场、公司、行业、文件和风险。你可以做信息整理、研究框架、分析思路、报告草稿和风险提示。你不能承诺收益，不能给出保证性投资结论，也不能替代持牌金融顾问。涉及投资判断时，要明确说明这只是研究参考，不构成投资建议。`;
 
 const realtimeQuotePrompt = `你是阿U智能体。用户正在询问实时行情。你必须只基于工具返回的行情数据回答，不要用模型记忆补价格。回答要包含：标的、最新价格、数据时间、数据来源、必要的延迟或交易时段提醒。可以简短解释价格含义，但不能扩展成投资建议。`;
+
+const knowledgePrompt = `你是阿U智能体，正在回答用户基于个人知识库的问题。你必须优先基于提供的知识库片段回答，不要编造片段里没有的信息。若资料不足，要明确说“现有资料不足以确认”，并列出还需要补充哪些信息。输出要结构清晰，可以按要点、风险、结论和下一步建议组织。所有内容仅供研究参考，不构成投资建议。`;
 
 function getLatestUserMessage(messages: ChatMessage[]) {
   return [...messages].reverse().find((message) => message.role === "user");
@@ -65,6 +73,76 @@ async function answerRealtimeQuote({
   };
 }
 
+function formatKnowledgeForPrompt(chunks: RetrievedKnowledgeChunk[]) {
+  return chunks
+    .map(
+      (chunk, index) =>
+        `片段 ${index + 1}\n标题：${chunk.title}\n来源：${chunk.sourceType}\n内容：${chunk.content}`,
+    )
+    .join("\n\n---\n\n");
+}
+
+async function answerFromKnowledgeBase({
+  question,
+  accessToken,
+  model,
+  apiKey,
+}: {
+  question: string;
+  accessToken?: string;
+  model: string;
+  apiKey: string;
+}) {
+  if (!accessToken) {
+    return {
+      answer:
+        "我识别到你想基于个人知识库回答，但当前没有拿到登录凭证。请先登录，然后重新提问，例如：根据我上传过的BP，总结核心风险。",
+      toolUsed: "knowledge",
+      knowledgeMatches: [],
+    };
+  }
+
+  const supabase = createSupabaseUserClient(accessToken);
+  const chunks = await searchKnowledgeChunks({
+    supabase,
+    question,
+  });
+
+  if (chunks.length === 0) {
+    return {
+      answer:
+        "我还没有检索到可用的知识库内容。你可以先上传文件并完成分析，系统会把分析结果沉淀到知识库里，然后再问：根据我上传过的资料，总结项目风险。",
+      toolUsed: "knowledge",
+      knowledgeMatches: [],
+    };
+  }
+
+  const result = await completeWithContinuation({
+    apiKey,
+    model,
+    messages: [
+      { role: "system", content: knowledgePrompt },
+      {
+        role: "user",
+        content: `用户问题：${question}\n\n知识库片段：\n${formatKnowledgeForPrompt(chunks)}`,
+      },
+    ],
+  });
+
+  return {
+    answer: result.answer,
+    wasContinued: result.wasContinued,
+    finishReason: result.finishReason,
+    toolUsed: "knowledge",
+    knowledgeMatches: chunks.map((chunk) => ({
+      id: chunk.id,
+      title: chunk.title,
+      sourceType: chunk.sourceType,
+      score: chunk.score,
+    })),
+  };
+}
+
 export async function POST(request: NextRequest) {
   let config: ReturnType<typeof getDeepSeekConfig>;
 
@@ -83,10 +161,18 @@ export async function POST(request: NextRequest) {
   }
 
   let messages: ChatMessage[];
+  let accessToken: string | undefined;
 
   try {
-    const body = (await request.json()) as { messages?: ChatMessage[] };
+    const body = (await request.json()) as {
+      messages?: ChatMessage[];
+      accessToken?: string;
+    };
     messages = Array.isArray(body.messages) ? body.messages : [];
+    accessToken =
+      typeof body.accessToken === "string" && body.accessToken.trim().length > 0
+        ? body.accessToken
+        : undefined;
   } catch {
     return NextResponse.json({ error: "请求内容不是有效的 JSON。" }, { status: 400 });
   }
@@ -122,6 +208,21 @@ export async function POST(request: NextRequest) {
         ...quoteAnswer,
         model: config.model,
         intent: "quote",
+      });
+    }
+
+    if (hasKnowledgeQuestionIntent(latestUserMessage.content)) {
+      const knowledgeAnswer = await answerFromKnowledgeBase({
+        question: latestUserMessage.content,
+        accessToken,
+        apiKey: config.apiKey,
+        model: config.model,
+      });
+
+      return NextResponse.json({
+        ...knowledgeAnswer,
+        model: config.model,
+        intent: "knowledge",
       });
     }
 

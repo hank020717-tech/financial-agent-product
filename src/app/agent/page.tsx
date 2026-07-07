@@ -35,7 +35,7 @@ type ChatMessage = {
 
 type ReportMode = "stock" | "industry" | "bp" | "roadshow";
 type FileAnalysisMode = "bp" | "roadshow" | "contract" | "research";
-type AgentIntent = ReportMode | "quote" | "chat";
+type AgentIntent = ReportMode | "quote" | "chat" | "knowledge";
 
 type ReportModeConfig = {
   id: ReportMode;
@@ -291,12 +291,20 @@ export default function AgentPage() {
     setIsSending(true);
 
     try {
+      let accessToken: string | undefined;
+
+      if (isSupabaseConfigured()) {
+        const supabase = createSupabaseBrowserClient();
+        const { data } = await supabase.auth.getSession();
+        accessToken = data.session?.access_token;
+      }
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ messages: nextMessages }),
+        body: JSON.stringify({ messages: nextMessages, accessToken }),
       });
 
       const data = (await response.json()) as {
