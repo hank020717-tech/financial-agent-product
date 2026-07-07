@@ -1,4 +1,8 @@
-import { createClient } from "@supabase/supabase-js";
+import {
+  createClient,
+  type SupabaseClient,
+  type User,
+} from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabasePublishableKey =
@@ -22,4 +26,27 @@ export function createSupabaseUserClient(accessToken: string) {
       },
     },
   });
+}
+
+export async function getAuthenticatedSupabaseUser(accessToken?: string): Promise<{
+  supabase: SupabaseClient;
+  user: User;
+}> {
+  const token = accessToken?.trim();
+
+  if (!token) {
+    throw new Error("请先登录后再使用阿U智能体。");
+  }
+
+  const supabase = createSupabaseUserClient(token);
+  const { data, error } = await supabase.auth.getUser();
+
+  if (error || !data.user) {
+    throw new Error("登录状态已过期，请重新登录后再试。");
+  }
+
+  return {
+    supabase,
+    user: data.user,
+  };
 }

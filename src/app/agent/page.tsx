@@ -382,6 +382,14 @@ export default function AgentPage() {
     setIsGeneratingReport(true);
 
     try {
+      let accessToken: string | undefined;
+
+      if (isSupabaseConfigured()) {
+        const supabase = createSupabaseBrowserClient();
+        const { data } = await supabase.auth.getSession();
+        accessToken = data.session?.access_token;
+      }
+
       const response = await fetch("/api/report", {
         method: "POST",
         headers: {
@@ -391,6 +399,7 @@ export default function AgentPage() {
           mode: selectedMode,
           topic: trimmedTopic,
           context,
+          accessToken,
         }),
       });
 
@@ -483,6 +492,13 @@ export default function AgentPage() {
       formData.append("mode", selectedFileMode);
       formData.append("note", fileNote);
       formData.append("file", selectedFile);
+
+      if (supabase) {
+        const { data } = await supabase.auth.getSession();
+        if (data.session?.access_token) {
+          formData.append("accessToken", data.session.access_token);
+        }
+      }
 
       const response = await fetch("/api/analyze-file", {
         method: "POST",

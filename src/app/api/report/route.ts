@@ -1,17 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateStructuredReport, isReportMode } from "@/lib/reports";
+import { getAuthenticatedSupabaseUser } from "@/lib/supabase/server";
 
 export async function POST(request: NextRequest) {
-  let body: { mode?: string; topic?: string; context?: string };
+  let body: {
+    mode?: string;
+    topic?: string;
+    context?: string;
+    accessToken?: string;
+  };
 
   try {
     body = (await request.json()) as {
       mode?: string;
       topic?: string;
       context?: string;
+      accessToken?: string;
     };
   } catch {
     return NextResponse.json({ error: "请求内容不是有效的 JSON。" }, { status: 400 });
+  }
+
+  const accessToken =
+    typeof body.accessToken === "string" && body.accessToken.trim().length > 0
+      ? body.accessToken
+      : undefined;
+
+  try {
+    await getAuthenticatedSupabaseUser(accessToken);
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "请先登录后再生成报告。",
+      },
+      { status: 401 },
+    );
   }
 
   const mode = body.mode || "";

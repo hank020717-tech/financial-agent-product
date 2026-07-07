@@ -11,7 +11,10 @@ import {
   RetrievedKnowledgeChunk,
   searchKnowledgeChunks,
 } from "@/lib/supabase/knowledge";
-import { createSupabaseUserClient } from "@/lib/supabase/server";
+import {
+  createSupabaseUserClient,
+  getAuthenticatedSupabaseUser,
+} from "@/lib/supabase/server";
 import {
   fetchTwelveDataQuote,
   formatQuoteForPrompt,
@@ -202,6 +205,20 @@ export async function POST(request: NextRequest) {
 
   if (!latestUserMessage) {
     return NextResponse.json({ error: "请先输入一个问题。" }, { status: 400 });
+  }
+
+  try {
+    await getAuthenticatedSupabaseUser(accessToken);
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "请先登录后再使用阿U智能体。",
+      },
+      { status: 401 },
+    );
   }
 
   const intent = resolveAgentIntent(latestUserMessage.content);

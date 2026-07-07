@@ -5,10 +5,14 @@ import {
   getDeepSeekConfig,
 } from "@/lib/deepseek";
 import { extractTextFromFile } from "@/lib/file-text";
+import { getAuthenticatedSupabaseUser } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
 type FileAnalysisMode = "bp" | "roadshow" | "contract" | "research";
+
+const maxUploadBytes = 20 * 1024 * 1024;
+const supportedFileNamePattern = /\.(pdf|docx|pptx|txt|md|csv|json)$/i;
 
 const modeLabels: Record<FileAnalysisMode, string> = {
   bp: "BP 风险分析",
@@ -106,9 +110,38 @@ export async function POST(request: NextRequest) {
     const file = formData.get("file");
     const mode = String(formData.get("mode") || "");
     const note = String(formData.get("note") || "").trim();
+    const accessToken = String(formData.get("accessToken") || "").trim();
+
+    try {
+      await getAuthenticatedSupabaseUser(accessToken);
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "请先登录后再分析文件。",
+        },
+        { status: 401 },
+      );
+    }
 
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "请先上传文件。" }, { status: 400 });
+    }
+
+    if (file instanceof File && file.size > maxUploadBytes) {
+      return NextResponse.json(
+        { error: "文件过大，请上传 20MB 以内的文件。" },
+        { status: 413 },
+      );
+    }
+
+    if (file instanceof File && !supportedFileNamePattern.test(file.name)) {
+      return NextResponse.json(
+        { error: "暂不支持该文件类型，请上传 PDF、DOCX、PPTX、TXT、MD、CSV 或 JSON 文件。" },
+        { status: 400 },
+      );
     }
 
     if (!isAnalysisMode(mode)) {
