@@ -25,6 +25,12 @@ Start the development server:
 npm run dev
 ```
 
+For first-version acceptance testing, use the production preview mode:
+
+```bash
+npm run preview
+```
+
 Open:
 
 ```txt

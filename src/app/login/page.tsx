@@ -84,6 +84,13 @@ export default function LoginPage() {
 
         if (signInError) throw signInError;
 
+        if (!data.session) {
+          setUserEmail("");
+          setLastSignInAt("");
+          setMessage("登录请求已提交，但还没有获得登录状态。请确认邮箱是否已完成验证。");
+          return;
+        }
+
         setUserEmail(data.user?.email ?? email);
         setLastSignInAt(data.user?.last_sign_in_at ?? "");
         setMessage("登录成功。现在可以开始把对话和报告保存到你的账户下。");
@@ -98,12 +105,19 @@ export default function LoginPage() {
 
         if (signUpError) throw signUpError;
 
-        setUserEmail(data.user?.email ?? email);
-        setMessage(
-          data.user?.identities?.length === 0
-            ? "这个邮箱可能已经注册过，请直接登录。"
-            : "注册请求已提交。如 Supabase 开启了邮箱确认，请先去邮箱完成确认。",
-        );
+        if (data.session) {
+          setUserEmail(data.user?.email ?? email);
+          setLastSignInAt(data.user?.last_sign_in_at ?? "");
+          setMessage("注册并登录成功。现在可以开始使用阿U。");
+        } else {
+          setUserEmail("");
+          setLastSignInAt("");
+          setMessage(
+            data.user?.identities?.length === 0
+              ? "这个邮箱可能已经注册过，请切换到登录。"
+              : "注册请求已提交。如果 Supabase 开启了邮箱确认，请先去邮箱点击确认链接，再回来登录。",
+          );
+        }
       }
     } catch (authError) {
       setError(
