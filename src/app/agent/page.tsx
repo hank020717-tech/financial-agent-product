@@ -517,27 +517,31 @@ export default function AgentPage() {
         source: "file-analysis",
       });
 
-      if (supabase && userId && uploadedFile && data.analysis) {
+      if (supabase && userId && data.analysis) {
         try {
           setHistoryStatus("正在保存文件和知识库");
 
-          const analysisId = await saveFileAnalysisRecord({
-            supabase,
-            userId,
-            fileId: uploadedFile.id,
-            sessionId: savedSessionId,
-            mode: selectedFileMode,
-            title: data.title || `${modeTitle}：${selectedFile.name}`,
-            note: fileNote,
-            analysis: assistantContent,
-            extractedCharacters: data.extractedCharacters || 0,
-          });
+          let analysisId: string | undefined;
+
+          if (uploadedFile) {
+            analysisId = await saveFileAnalysisRecord({
+              supabase,
+              userId,
+              fileId: uploadedFile.id,
+              sessionId: savedSessionId,
+              mode: selectedFileMode,
+              title: data.title || `${modeTitle}：${selectedFile.name}`,
+              note: fileNote,
+              analysis: assistantContent,
+              extractedCharacters: data.extractedCharacters || 0,
+            });
+          }
 
           await createKnowledgeDocumentFromText({
             supabase,
             userId,
             title: data.title || `${modeTitle}：${selectedFile.name}`,
-            sourceType: "file_analysis",
+            sourceType: uploadedFile ? "file_analysis" : "file_analysis_result",
             sourceId: analysisId,
             content: [
               `文件名：${selectedFile.name}`,
@@ -549,14 +553,18 @@ export default function AgentPage() {
               .filter(Boolean)
               .join("\n\n"),
             metadata: {
-              fileId: uploadedFile.id,
+              fileId: uploadedFile?.id ?? null,
               mode: selectedFileMode,
             },
           });
 
-          setHistoryStatus("文件、分析和知识库已保存");
+          setHistoryStatus(
+            uploadedFile
+              ? "文件、分析和知识库已保存"
+              : "知识库已保存，原文件暂未保存",
+          );
         } catch (saveFileError) {
-          setHistoryStatus(`分析已完成，文件历史保存失败：${getSaveErrorMessage(saveFileError)}`);
+          setHistoryStatus(`分析已完成，知识库保存失败：${getSaveErrorMessage(saveFileError)}`);
         }
       } else if (storageWarning) {
         setHistoryStatus(`分析已完成，${storageWarning}`);
