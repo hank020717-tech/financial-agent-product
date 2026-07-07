@@ -125,6 +125,7 @@ function buildSessionExportContent({
 
 export default function HistoryPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("sessions");
+  const [userId, setUserId] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [reports, setReports] = useState<SavedReport[]>([]);
@@ -182,22 +183,26 @@ export default function HistoryPage() {
         }
 
         setUserEmail(user.email ?? "");
+        setUserId(user.id);
 
         const [sessionsResult, messagesResult, reportsResult, fileAnalysesResult] =
           await Promise.all([
             supabase
               .from("chat_sessions")
               .select("id,title,created_at,updated_at")
+              .eq("user_id", user.id)
               .order("updated_at", { ascending: false })
               .limit(50),
             supabase
               .from("chat_messages")
               .select("id,session_id,role,content,created_at")
+              .eq("user_id", user.id)
               .order("created_at", { ascending: true })
               .limit(300),
             supabase
               .from("reports")
               .select("id,title,report_type,content,source,created_at")
+              .eq("user_id", user.id)
               .order("created_at", { ascending: false })
               .limit(50),
             supabase
@@ -205,6 +210,7 @@ export default function HistoryPage() {
               .select(
                 "id,title,mode,note,analysis,extracted_characters,created_at,user_files(id,bucket_id,storage_path,file_name,content_type,size_bytes)",
               )
+              .eq("user_id", user.id)
               .order("created_at", { ascending: false })
               .limit(50),
           ]);
@@ -285,7 +291,7 @@ export default function HistoryPage() {
 
   async function deleteSession(sessionId: string) {
     const targetSession = sessions.find((session) => session.id === sessionId);
-    if (!targetSession || isDeleting) return;
+    if (!targetSession || isDeleting || !userId) return;
 
     const confirmed = window.confirm(
       `确定删除这条历史对话吗？\n\n${targetSession.title}`,
@@ -302,7 +308,8 @@ export default function HistoryPage() {
       const { error: deleteError } = await supabase
         .from("chat_sessions")
         .delete()
-        .eq("id", sessionId);
+        .eq("id", sessionId)
+        .eq("user_id", userId);
 
       if (deleteError) throw deleteError;
 
@@ -326,7 +333,7 @@ export default function HistoryPage() {
 
   async function deleteReport(reportId: string) {
     const targetReport = reports.find((report) => report.id === reportId);
-    if (!targetReport || isDeleting) return;
+    if (!targetReport || isDeleting || !userId) return;
 
     const confirmed = window.confirm(
       `确定删除这份报告吗？\n\n${targetReport.title}`,
@@ -343,7 +350,8 @@ export default function HistoryPage() {
       const { error: deleteError } = await supabase
         .from("reports")
         .delete()
-        .eq("id", reportId);
+        .eq("id", reportId)
+        .eq("user_id", userId);
 
       if (deleteError) throw deleteError;
 
@@ -362,7 +370,12 @@ export default function HistoryPage() {
   }
 
   async function downloadOriginalFile(analysis: SavedFileAnalysis) {
-    if (!analysis.user_files) return;
+    if (!analysis.user_files || !userId) return;
+
+    if (!analysis.user_files.storage_path.startsWith(`${userId}/`)) {
+      setError("这个文件不属于当前账户，无法打开。");
+      return;
+    }
 
     try {
       const supabase = createSupabaseBrowserClient();
@@ -382,7 +395,7 @@ export default function HistoryPage() {
     const targetAnalysis = fileAnalyses.find(
       (analysis) => analysis.id === analysisId,
     );
-    if (!targetAnalysis || isDeleting) return;
+    if (!targetAnalysis || isDeleting || !userId) return;
 
     const confirmed = window.confirm(
       `确定删除这条文件分析和原始文件吗？\n\n${targetAnalysis.title}`,
@@ -398,6 +411,10 @@ export default function HistoryPage() {
       const supabase = createSupabaseBrowserClient();
 
       if (targetAnalysis.user_files) {
+        if (!targetAnalysis.user_files.storage_path.startsWith(`${userId}/`)) {
+          throw new Error("这个文件不属于当前账户，无法删除。");
+        }
+
         await supabase.storage
           .from(targetAnalysis.user_files.bucket_id)
           .remove([targetAnalysis.user_files.storage_path]);
@@ -405,14 +422,16 @@ export default function HistoryPage() {
         const { error: fileError } = await supabase
           .from("user_files")
           .delete()
-          .eq("id", targetAnalysis.user_files.id);
+          .eq("id", targetAnalysis.user_files.id)
+          .eq("user_id", userId);
 
         if (fileError) throw fileError;
       } else {
         const { error: analysisError } = await supabase
           .from("file_analyses")
           .delete()
-          .eq("id", analysisId);
+          .eq("id", analysisId)
+          .eq("user_id", userId);
 
         if (analysisError) throw analysisError;
       }

@@ -39,6 +39,8 @@ Create `.env.local` in the project root:
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
 DEEPSEEK_MODEL=deepseek-v4-flash
 TWELVEDATA_API_KEY=your_twelve_data_api_key_here
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url_here
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key_here
 ```
 
 `.env.local` is ignored by Git and must not be uploaded to GitHub.
@@ -46,9 +48,22 @@ TWELVEDATA_API_KEY=your_twelve_data_api_key_here
 `TWELVEDATA_API_KEY` is used by the agent when users ask real-time quote
 questions, such as gold, BTC, NVDA, S&P 500, oil, or the US dollar index.
 
+Supabase is used for login, history, reports, file records, Storage, and the
+agent memory created from uploaded file analyses.
+
 ## Checks
 
 ```bash
 npm run lint
 npm run build
+npm run verify
 ```
+
+## Deployment
+
+See `docs/deployment-checklist.md` before deploying to Vercel or your own
+server.
+
+## Acceptance
+
+See `docs/first-version-acceptance.md` for the first-version product test flow.

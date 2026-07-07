@@ -7,9 +7,12 @@ import {
   ArrowLeft,
   CheckCircle2,
   History,
+  KeyRound,
   Loader2,
   LogIn,
+  LogOut,
   Mail,
+  MessageSquareText,
   UserPlus,
 } from "lucide-react";
 import {
@@ -24,6 +27,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [userEmail, setUserEmail] = useState("");
+  const [lastSignInAt, setLastSignInAt] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -36,7 +40,17 @@ export default function LoginPage() {
 
     supabase.auth.getUser().then(({ data }) => {
       setUserEmail(data.user?.email ?? "");
+      setLastSignInAt(data.user?.last_sign_in_at ?? "");
     });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserEmail(session?.user.email ?? "");
+      setLastSignInAt(session?.user.last_sign_in_at ?? "");
+    });
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
   }, [configured]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -71,6 +85,7 @@ export default function LoginPage() {
         if (signInError) throw signInError;
 
         setUserEmail(data.user?.email ?? email);
+        setLastSignInAt(data.user?.last_sign_in_at ?? "");
         setMessage("登录成功。现在可以开始把对话和报告保存到你的账户下。");
       } else {
         const { data, error: signUpError } = await supabase.auth.signUp({
@@ -115,12 +130,54 @@ export default function LoginPage() {
       if (signOutError) throw signOutError;
 
       setUserEmail("");
+      setLastSignInAt("");
       setMessage("已退出登录。");
     } catch (authError) {
       setError(
         authError instanceof Error
           ? authError.message
           : "退出登录失败，请稍后再试。",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function sendPasswordResetEmail() {
+    setError("");
+    setMessage("");
+
+    if (!configured) {
+      setError("Supabase 还没有配置，暂时无法发送重置邮件。");
+      return;
+    }
+
+    const targetEmail = (email || userEmail).trim();
+
+    if (!targetEmail) {
+      setError("请先填写邮箱，再发送重置密码邮件。");
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+        targetEmail,
+        {
+          redirectTo: `${window.location.origin}/login`,
+        },
+      );
+
+      if (resetError) throw resetError;
+
+      setMessage("重置密码邮件已发送，请到邮箱查看。");
+    } catch (resetError) {
+      setError(
+        resetError instanceof Error
+          ? resetError.message
+          : "重置密码邮件发送失败，请稍后再试。",
       );
     } finally {
       setIsLoading(false);
@@ -147,7 +204,7 @@ export default function LoginPage() {
           <div>
             <p className="text-sm font-semibold text-zinc-950">登录/注册</p>
             <p className="mt-1 text-sm leading-6 text-zinc-500">
-              第一版使用 Supabase Auth。登录后，下一步会把对话和报告保存到你的账户。
+              第一版使用 Supabase Auth。登录后，对话、报告、文件分析和阿U记忆会保存到你的账户。
             </p>
           </div>
 
@@ -257,21 +314,53 @@ export default function LoginPage() {
                 type="button"
                 onClick={() => void signOut()}
                 disabled={isLoading}
-                className="inline-flex h-11 w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
+                <LogOut className="h-4 w-4" aria-hidden="true" />
                 退出登录
               </button>
             ) : null}
+
+            <button
+              type="button"
+              onClick={() => void sendPasswordResetEmail()}
+              disabled={isLoading || !configured}
+              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <KeyRound className="h-4 w-4" aria-hidden="true" />
+              发送重置密码邮件
+            </button>
           </form>
         </div>
 
         <aside className="h-fit rounded-lg border border-zinc-200 bg-white p-5">
-          <p className="text-sm font-semibold text-zinc-950">下一步保存内容</p>
+          <p className="text-sm font-semibold text-zinc-950">账户状态</p>
           <div className="mt-3 space-y-3 text-sm leading-6 text-zinc-600">
-            <p>登录打通后，我们会继续接 Supabase 数据表。</p>
-            <p>第一批建议保存：对话记录、生成报告、上传文件分析结果。</p>
-            <p>再往后接 Supabase Storage，用来保存用户上传的原始文件。</p>
+            <p>
+              {userEmail
+                ? `当前账户：${userEmail}`
+                : "登录后会启用历史记录、报告保存、文件分析保存和阿U记忆。"}
+            </p>
+            {lastSignInAt ? (
+              <p>
+                最近登录：
+                {new Intl.DateTimeFormat("zh-CN", {
+                  month: "2-digit",
+                  day: "2-digit",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }).format(new Date(lastSignInAt))}
+              </p>
+            ) : null}
+            <p>金融内容仅供研究参考，不构成投资建议。</p>
           </div>
+          <Link
+            href="/agent"
+            className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-700 transition hover:border-zinc-300 hover:bg-zinc-50"
+          >
+            <MessageSquareText className="h-4 w-4" aria-hidden="true" />
+            返回阿U
+          </Link>
           {userEmail ? (
             <Link
               href="/history"

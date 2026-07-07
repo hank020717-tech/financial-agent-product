@@ -23,7 +23,7 @@ const systemPrompt = `你是阿U智能体，一个面向金融市场研究的中
 
 const realtimeQuotePrompt = `你是阿U智能体。用户正在询问实时行情。你必须只基于工具返回的行情数据回答，不要用模型记忆补价格。回答要包含：标的、最新价格、数据时间、数据来源、必要的延迟或交易时段提醒。可以简短解释价格含义，但不能扩展成投资建议。`;
 
-const knowledgePrompt = `你是阿U智能体，正在回答用户基于个人知识库的问题。你必须优先基于提供的知识库片段回答，不要编造片段里没有的信息。若资料不足，要明确说“现有资料不足以确认”，并列出还需要补充哪些信息。输出要结构清晰，可以按要点、风险、结论和下一步建议组织。所有内容仅供研究参考，不构成投资建议。`;
+const knowledgePrompt = `你是阿U智能体，正在回答用户基于已保存资料的问题。你必须优先基于提供的资料片段回答，不要编造片段里没有的信息。若资料不足，要明确说“现有资料不足以确认”，并列出还需要补充哪些信息。输出要结构清晰，可以按要点、风险、结论和下一步建议组织。所有内容仅供研究参考，不构成投资建议。不要暴露数据库、向量、chunk 等技术实现。`;
 
 function getLatestUserMessage(messages: ChatMessage[]) {
   return [...messages].reverse().find((message) => message.role === "user");
@@ -82,6 +82,16 @@ function formatKnowledgeForPrompt(chunks: RetrievedKnowledgeChunk[]) {
     .join("\n\n---\n\n");
 }
 
+function formatKnowledgeSourceNotice(chunks: RetrievedKnowledgeChunk[]) {
+  const titles = [...new Set(chunks.map((chunk) => chunk.title))]
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (titles.length === 0) return "已参考你保存过的资料。";
+
+  return `已参考你保存过的资料：${titles.join("、")}。`;
+}
+
 async function answerFromKnowledgeBase({
   question,
   accessToken,
@@ -130,7 +140,7 @@ async function answerFromKnowledgeBase({
   });
 
   return {
-    answer: result.answer,
+    answer: `${formatKnowledgeSourceNotice(chunks)}\n\n${result.answer}`,
     wasContinued: result.wasContinued,
     finishReason: result.finishReason,
     toolUsed: "knowledge",

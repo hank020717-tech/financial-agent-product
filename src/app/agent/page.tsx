@@ -91,7 +91,7 @@ const fileAnalysisModes: Array<{ id: FileAnalysisMode; title: string }> = [
 const starterPrompts = [
   "黄金现在多少钱？",
   "帮我生成一份 NVDA 个股分析报告",
-  "如何理解美联储降息对科技股的影响？",
+  "根据我上传过的资料，总结项目核心风险",
   "生成一份新能源行业研究报告大纲",
   "帮我写一个 AI 金融助手项目的路演稿",
 ];
@@ -99,7 +99,7 @@ const starterPrompts = [
 const initialMessage: ChatMessage = {
   role: "assistant",
   content:
-    "你好，我是阿U智能体。你可以直接聊天，也可以直接说“生成 NVDA 个股分析报告”“黄金现在多少钱”“写一版路演稿”，我会自动判断任务并调用对应能力。",
+    "你好，我是阿U智能体。你可以直接聊天，也可以直接说“生成 NVDA 个股分析报告”“黄金现在多少钱”“写一版路演稿”。上传文件并完成分析后，我也能基于保存过的资料继续帮你追问和整理。",
 };
 
 export default function AgentPage() {
@@ -311,6 +311,7 @@ export default function AgentPage() {
         answer?: string;
         error?: string;
         intent?: AgentIntent;
+        knowledgeMatches?: unknown[];
         title?: string;
         toolUsed?: string;
       };
@@ -328,7 +329,7 @@ export default function AgentPage() {
         },
       ]);
 
-      void saveTurn({
+      const savePromise = saveTurn({
         userContent: trimmedContent,
         assistantContent,
         intent: data.intent,
@@ -336,6 +337,16 @@ export default function AgentPage() {
         reportType: isReportIntent(data.intent) ? data.intent : undefined,
         source: data.toolUsed || "chat",
       });
+
+      if (data.intent === "knowledge") {
+        void savePromise.then(() => {
+          setHistoryStatus(
+            data.knowledgeMatches && data.knowledgeMatches.length > 0
+              ? "已参考阿U记忆"
+              : "未找到可参考记忆",
+          );
+        });
+      }
     } catch {
       const assistantContent = "连接智能体失败，请检查网络或稍后重试。";
 
@@ -519,7 +530,7 @@ export default function AgentPage() {
 
       if (supabase && userId && data.analysis) {
         try {
-          setHistoryStatus("正在保存文件和知识库");
+          setHistoryStatus("正在加入阿U记忆");
 
           let analysisId: string | undefined;
 
@@ -560,11 +571,11 @@ export default function AgentPage() {
 
           setHistoryStatus(
             uploadedFile
-              ? "文件、分析和知识库已保存"
-              : "知识库已保存，原文件暂未保存",
+              ? "文件、分析和阿U记忆已保存"
+              : "已加入阿U记忆，原文件暂未保存",
           );
         } catch (saveFileError) {
-          setHistoryStatus(`分析已完成，知识库保存失败：${getSaveErrorMessage(saveFileError)}`);
+          setHistoryStatus(`分析已完成，阿U记忆保存失败：${getSaveErrorMessage(saveFileError)}`);
         }
       } else if (storageWarning) {
         setHistoryStatus(`分析已完成，${storageWarning}`);
@@ -874,10 +885,10 @@ export default function AgentPage() {
                 <div className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                   {isAnalyzingFile
-                    ? "文件正在分析"
+                    ? "文件正在分析，完成后会加入阿U记忆"
                     : isGeneratingReport
                       ? `${activeMode.title}正在生成`
-                      : "阿U正在识别任务并调用能力"}
+                      : "阿U正在识别任务、行情或已保存资料"}
                 </div>
               </div>
             ) : null}

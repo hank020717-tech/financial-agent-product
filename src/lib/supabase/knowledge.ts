@@ -102,9 +102,21 @@ function scoreKnowledgeChunk({
 }
 
 export function hasKnowledgeQuestionIntent(question: string) {
-  return /知识库|上传过|上传的|历史资料|历史文件|保存的|根据.*(资料|文件|报告|分析|内容)|基于.*(资料|文件|报告|分析|内容)|结合.*(资料|文件|报告|分析|内容)|从.*(资料|文件|报告|分析|内容)/u.test(
-    question,
-  );
+  const normalizedQuestion = question.toLowerCase();
+  const explicitMemoryIntent =
+    /知识库|阿u记忆|记忆|上传过|上传的|历史资料|历史文件|保存的|刚才上传|上次上传|之前上传|前面上传/u.test(
+      normalizedQuestion,
+    );
+  const referenceIntent =
+    /(根据|基于|结合|参考|从|围绕).*(资料|文件|报告|分析|内容|bp|项目|路演|合同|研报)/u.test(
+      normalizedQuestion,
+    );
+  const followUpIntent =
+    /(刚才|之前|上次|前面|那份|这份|那个|这个).*(资料|文件|报告|分析|内容|bp|项目|路演|合同|研报)/u.test(
+      normalizedQuestion,
+    );
+
+  return explicitMemoryIntent || referenceIntent || followUpIntent;
 }
 
 export type RetrievedKnowledgeChunk = {
