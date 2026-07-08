@@ -70,6 +70,9 @@ npm run verify
 See `docs/deployment-checklist.md` before deploying to Vercel or your own
 server.
 
+For the current Alibaba Cloud + Cloudflare production setup, see
+`docs/online-deployment-guide.md`.
+
 ## Acceptance
 
 See `docs/first-version-acceptance.md` for the first-version product test flow.
