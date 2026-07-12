@@ -16,6 +16,12 @@ import {
   getAuthenticatedSupabaseUser,
 } from "@/lib/supabase/server";
 import {
+  checkCredits,
+  formatInsufficientCreditsMessage,
+  spendCredits,
+  type CreditFeature,
+} from "@/lib/supabase/credits";
+import {
   fetchTwelveDataQuote,
   formatQuoteForPrompt,
   hasRealtimeQuoteIntent,
@@ -27,6 +33,46 @@ const systemPrompt = `你是阿U智能体，一个面向金融市场研究的中
 const realtimeQuotePrompt = `你是阿U智能体。用户正在询问实时行情。你必须只基于工具返回的行情数据回答，不要用模型记忆补价格。回答要包含：标的、最新价格、数据时间、数据来源、必要的延迟或交易时段提醒。可以简短解释价格含义，但不能扩展成投资建议。`;
 
 const knowledgePrompt = `你是阿U智能体，正在回答用户基于已保存资料的问题。你必须优先基于提供的资料片段回答，不要编造片段里没有的信息。若资料不足，要明确说“现有资料不足以确认”，并列出还需要补充哪些信息。输出要结构清晰，可以按要点、风险、结论和下一步建议组织。所有内容仅供研究参考，不构成投资建议。不要暴露数据库、向量、chunk 等技术实现。`;
+
+async function prepareCreditCharge({
+  supabase,
+  userId,
+  feature,
+}: {
+  supabase: Awaited<ReturnType<typeof getAuthenticatedSupabaseUser>>["supabase"];
+  userId: string;
+  feature: CreditFeature;
+}) {
+  const creditCheck = await checkCredits({
+    supabase,
+    userId,
+    feature,
+  });
+
+  if (!creditCheck.ok) {
+    return {
+      cost: creditCheck.cost,
+      response: NextResponse.json(
+        {
+          error: formatInsufficientCreditsMessage({
+            balance: creditCheck.balance,
+            cost: creditCheck.cost,
+          }),
+          credits: {
+            balance: creditCheck.balance,
+            required: creditCheck.cost,
+          },
+        },
+        { status: 402 },
+      ),
+    };
+  }
+
+  return {
+    cost: creditCheck.cost,
+    response: null,
+  };
+}
 
 function getLatestUserMessage(messages: ChatMessage[]) {
   return [...messages].reverse().find((message) => message.role === "user");
@@ -72,6 +118,7 @@ async function answerRealtimeQuote({
   return {
     answer: quoteResult.answer,
     quote,
+    usage: quoteResult.usage,
     toolUsed: "quote",
   };
 }
@@ -146,6 +193,7 @@ async function answerFromKnowledgeBase({
     answer: `${formatKnowledgeSourceNotice(chunks)}\n\n${result.answer}`,
     wasContinued: result.wasContinued,
     finishReason: result.finishReason,
+    usage: result.usage,
     toolUsed: "knowledge",
     knowledgeMatches: chunks.map((chunk) => ({
       id: chunk.id,
@@ -161,13 +209,10 @@ export async function POST(request: NextRequest) {
 
   try {
     config = getDeepSeekConfig();
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "DeepSeek API Key 还没有配置。",
+        error: "AI 服务还没有配置，请联系管理员处理。",
       },
       { status: 500 },
     );
@@ -207,8 +252,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "请先输入一个问题。" }, { status: 400 });
   }
 
+  let authContext: Awaited<ReturnType<typeof getAuthenticatedSupabaseUser>>;
+
   try {
-    await getAuthenticatedSupabaseUser(accessToken);
+    authContext = await getAuthenticatedSupabaseUser(accessToken);
   } catch (error) {
     return NextResponse.json(
       {
@@ -225,30 +272,83 @@ export async function POST(request: NextRequest) {
 
   try {
     if (intent.type === "quote" || hasRealtimeQuoteIntent(latestUserMessage.content)) {
+      if (!resolveQuoteTarget(latestUserMessage.content)) {
+        return NextResponse.json({
+          answer:
+            "我识别到你在问实时行情，但还没有识别出具体标的。你可以试试输入：黄金、BTC、NVDA、标普500、原油、美元指数等。",
+          intent: "quote",
+          toolUsed: "quote",
+        });
+      }
+
+      const creditCharge = await prepareCreditCharge({
+        supabase: authContext.supabase,
+        userId: authContext.user.id,
+        feature: "quote",
+      });
+
+      if (creditCharge.response) return creditCharge.response;
+
       const quoteAnswer = await answerRealtimeQuote({
         question: latestUserMessage.content,
         apiKey: config.apiKey,
         model: config.model,
       });
+      const credits = quoteAnswer.usage
+        ? await spendCredits({
+            supabase: authContext.supabase,
+            feature: "quote",
+            credits: creditCharge.cost,
+            model: config.model,
+            usage: quoteAnswer.usage,
+            metadata: {
+              intent: "quote",
+              source: "chat",
+            },
+          })
+        : undefined;
 
       return NextResponse.json({
         ...quoteAnswer,
-        model: config.model,
+        usage: undefined,
+        credits,
         intent: "quote",
       });
     }
 
     if (hasKnowledgeQuestionIntent(latestUserMessage.content)) {
+      const creditCharge = await prepareCreditCharge({
+        supabase: authContext.supabase,
+        userId: authContext.user.id,
+        feature: "knowledge",
+      });
+
+      if (creditCharge.response) return creditCharge.response;
+
       const knowledgeAnswer = await answerFromKnowledgeBase({
         question: latestUserMessage.content,
         accessToken,
         apiKey: config.apiKey,
         model: config.model,
       });
+      const credits = knowledgeAnswer.usage
+        ? await spendCredits({
+            supabase: authContext.supabase,
+            feature: "knowledge",
+            credits: creditCharge.cost,
+            model: config.model,
+            usage: knowledgeAnswer.usage,
+            metadata: {
+              intent: "knowledge",
+              source: "chat",
+            },
+          })
+        : undefined;
 
       return NextResponse.json({
         ...knowledgeAnswer,
-        model: config.model,
+        usage: undefined,
+        credits,
         intent: "knowledge",
       });
     }
@@ -257,10 +357,18 @@ export async function POST(request: NextRequest) {
       if (!intent.topic) {
         return NextResponse.json({
           answer: `我已经识别到你想生成「${reportTemplates[intent.mode].title}」，但还缺少分析对象。你可以补一句具体标的、行业或项目名称。`,
-          model: config.model,
           intent: intent.mode,
         });
       }
+
+      const reportFeature = `report_${intent.mode}` as CreditFeature;
+      const creditCharge = await prepareCreditCharge({
+        supabase: authContext.supabase,
+        userId: authContext.user.id,
+        feature: reportFeature,
+      });
+
+      if (creditCharge.response) return creditCharge.response;
 
       const target = resolveQuoteTarget(latestUserMessage.content);
       let context = intent.context;
@@ -292,16 +400,36 @@ export async function POST(request: NextRequest) {
         topic: intent.topic,
         context,
       });
+      const credits = await spendCredits({
+        supabase: authContext.supabase,
+        feature: reportFeature,
+        credits: creditCharge.cost,
+        model: result.model,
+        usage: result.usage,
+        metadata: {
+          intent: intent.mode,
+          source: "chat-report",
+          sectionCount: result.sectionCount,
+        },
+      });
 
       return NextResponse.json({
         answer: result.report,
-        model: result.model,
         title: result.title,
         sectionCount: result.sectionCount,
         intent: intent.mode,
+        credits,
         toolUsed: "report",
       });
     }
+
+    const creditCharge = await prepareCreditCharge({
+      supabase: authContext.supabase,
+      userId: authContext.user.id,
+      feature: "chat",
+    });
+
+    if (creditCharge.response) return creditCharge.response;
 
     const conversation: ChatMessage[] = [
       { role: "system", content: systemPrompt },
@@ -312,21 +440,29 @@ export async function POST(request: NextRequest) {
       ...config,
       messages: conversation,
     });
+    const credits = await spendCredits({
+      supabase: authContext.supabase,
+      feature: "chat",
+      credits: creditCharge.cost,
+      model: config.model,
+      usage: result.usage,
+      metadata: {
+        intent: "chat",
+        source: "chat",
+      },
+    });
 
     return NextResponse.json({
       answer: result.answer,
-      model: config.model,
       wasContinued: result.wasContinued,
       finishReason: result.finishReason,
+      credits,
       intent: "chat",
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "连接智能体失败，请稍后重试。",
+        error: "连接智能体失败，请稍后重试。",
       },
       { status: 502 },
     );

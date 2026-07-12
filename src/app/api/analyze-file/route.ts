@@ -5,6 +5,12 @@ import {
   getDeepSeekConfig,
 } from "@/lib/deepseek";
 import { extractTextFromFile } from "@/lib/file-text";
+import {
+  checkCredits,
+  formatInsufficientCreditsMessage,
+  spendCredits,
+  type CreditFeature,
+} from "@/lib/supabase/credits";
 import { getAuthenticatedSupabaseUser } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -93,13 +99,10 @@ export async function POST(request: NextRequest) {
 
   try {
     config = getDeepSeekConfig();
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "DeepSeek API Key 还没有配置。",
+        error: "AI 服务还没有配置，请联系管理员处理。",
       },
       { status: 500 },
     );
@@ -112,8 +115,10 @@ export async function POST(request: NextRequest) {
     const note = String(formData.get("note") || "").trim();
     const accessToken = String(formData.get("accessToken") || "").trim();
 
+    let authContext: Awaited<ReturnType<typeof getAuthenticatedSupabaseUser>>;
+
     try {
-      await getAuthenticatedSupabaseUser(accessToken);
+      authContext = await getAuthenticatedSupabaseUser(accessToken);
     } catch (error) {
       return NextResponse.json(
         {
@@ -148,6 +153,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "请选择有效的文件分析类型。" }, { status: 400 });
     }
 
+    const feature = `file_${mode}` as CreditFeature;
+    const creditCheck = await checkCredits({
+      supabase: authContext.supabase,
+      userId: authContext.user.id,
+      feature,
+    });
+
+    if (!creditCheck.ok) {
+      return NextResponse.json(
+        {
+          error: formatInsufficientCreditsMessage({
+            balance: creditCheck.balance,
+            cost: creditCheck.cost,
+          }),
+          credits: {
+            balance: creditCheck.balance,
+            required: creditCheck.cost,
+          },
+        },
+        { status: 402 },
+      );
+    }
+
     const extractedText = await extractTextFromFile(file);
 
     if (!extractedText) {
@@ -179,23 +207,33 @@ export async function POST(request: NextRequest) {
       messages,
       maxContinuationRequests: 3,
     });
+    const credits = await spendCredits({
+      supabase: authContext.supabase,
+      feature,
+      credits: creditCheck.cost,
+      model: config.model,
+      usage: result.usage,
+      metadata: {
+        intent: mode,
+        source: "file-analysis",
+        fileName: file.name,
+        fileSize: file.size,
+      },
+    });
 
     return NextResponse.json({
       title: `${modeLabels[mode]}：${file.name}`,
       analysis: result.answer,
       extractedCharacters: extractedText.length,
       knowledgeText: extractedText.slice(0, 60000),
-      model: config.model,
       wasContinued: result.wasContinued,
       finishReason: result.finishReason,
+      credits,
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "文件分析失败，请稍后重试。",
+        error: "文件分析失败，请稍后重试。",
       },
       { status: 502 },
     );

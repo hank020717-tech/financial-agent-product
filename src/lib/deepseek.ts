@@ -10,10 +10,17 @@ type DeepSeekChoice = {
   };
 };
 
+export type TokenUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+};
+
 type CompletionResult = {
   answer: string;
   finishReason?: string;
   wasContinued: boolean;
+  usage: TokenUsage;
 };
 
 const deepSeekApiUrl = "https://api.deepseek.com/chat/completions";
@@ -75,9 +82,30 @@ export async function callDeepSeek({
     throw new Error("DeepSeek 没有返回有效回答。");
   }
 
+  const usage = data?.usage as
+    | {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+      }
+    | undefined;
+
   return {
     answer,
     finishReason: choice?.finish_reason,
+    usage: {
+      promptTokens: usage?.prompt_tokens ?? 0,
+      completionTokens: usage?.completion_tokens ?? 0,
+      totalTokens: usage?.total_tokens ?? 0,
+    },
+  };
+}
+
+function addUsage(left: TokenUsage, right: TokenUsage): TokenUsage {
+  return {
+    promptTokens: left.promptTokens + right.promptTokens,
+    completionTokens: left.completionTokens + right.completionTokens,
+    totalTokens: left.totalTokens + right.totalTokens,
   };
 }
 
@@ -97,6 +125,7 @@ export async function completeWithContinuation({
   const firstResult = await callDeepSeek({ apiKey, model, messages });
   const answerParts = [firstResult.answer];
   let finishReason = firstResult.finishReason;
+  let usage = firstResult.usage;
 
   for (
     let continuationCount = 0;
@@ -117,11 +146,13 @@ export async function completeWithContinuation({
 
     answerParts.push(continuationResult.answer);
     finishReason = continuationResult.finishReason;
+    usage = addUsage(usage, continuationResult.usage);
   }
 
   return {
     answer: answerParts.join("\n\n"),
     finishReason,
     wasContinued: answerParts.length > 1,
+    usage,
   };
 }

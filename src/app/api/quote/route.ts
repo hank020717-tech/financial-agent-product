@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchTwelveDataQuote, resolveQuoteTarget } from "@/lib/quotes";
+import {
+  checkCredits,
+  formatInsufficientCreditsMessage,
+  spendCredits,
+} from "@/lib/supabase/credits";
 import { getAuthenticatedSupabaseUser } from "@/lib/supabase/server";
 
 export async function POST(request: NextRequest) {
@@ -16,8 +21,10 @@ export async function POST(request: NextRequest) {
       ? body.accessToken
       : undefined;
 
+  let authContext: Awaited<ReturnType<typeof getAuthenticatedSupabaseUser>>;
+
   try {
-    await getAuthenticatedSupabaseUser(accessToken);
+    authContext = await getAuthenticatedSupabaseUser(accessToken);
   } catch (error) {
     return NextResponse.json(
       {
@@ -46,8 +53,46 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const creditCheck = await checkCredits({
+      supabase: authContext.supabase,
+      userId: authContext.user.id,
+      feature: "quote",
+    });
+
+    if (!creditCheck.ok) {
+      return NextResponse.json(
+        {
+          error: formatInsufficientCreditsMessage({
+            balance: creditCheck.balance,
+            cost: creditCheck.cost,
+          }),
+          credits: {
+            balance: creditCheck.balance,
+            required: creditCheck.cost,
+          },
+        },
+        { status: 402 },
+      );
+    }
+
     const quote = await fetchTwelveDataQuote({ target, query });
-    return NextResponse.json({ quote });
+    const credits = await spendCredits({
+      supabase: authContext.supabase,
+      feature: "quote",
+      credits: creditCheck.cost,
+      model: "market-data",
+      usage: {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      },
+      metadata: {
+        source: "quote-api",
+        symbol: target.symbol,
+      },
+    });
+
+    return NextResponse.json({ quote, credits });
   } catch (error) {
     return NextResponse.json(
       {

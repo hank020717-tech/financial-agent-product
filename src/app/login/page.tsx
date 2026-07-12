@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -28,10 +28,44 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [lastSignInAt, setLastSignInAt] = useState("");
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const configured = isSupabaseConfigured();
+
+  const refreshCredits = useCallback(async (token?: string) => {
+    if (!configured) return;
+
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const accessToken =
+        token || (await supabase.auth.getSession()).data.session?.access_token;
+
+      if (!accessToken) {
+        setCreditBalance(null);
+        return;
+      }
+
+      const response = await fetch("/api/credits", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ accessToken }),
+      });
+
+      const data = (await response.json()) as {
+        balance?: number;
+      };
+
+      if (typeof data.balance === "number") {
+        setCreditBalance(data.balance);
+      }
+    } catch {
+      setCreditBalance(null);
+    }
+  }, [configured]);
 
   useEffect(() => {
     if (!configured) return;
@@ -43,15 +77,25 @@ export default function LoginPage() {
       setLastSignInAt(data.user?.last_sign_in_at ?? "");
     });
 
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session?.access_token) {
+        void refreshCredits(data.session.access_token);
+      }
+    });
+
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserEmail(session?.user.email ?? "");
       setLastSignInAt(session?.user.last_sign_in_at ?? "");
+      setCreditBalance(null);
+      if (session?.access_token) {
+        void refreshCredits(session.access_token);
+      }
     });
 
     return () => {
       listener.subscription.unsubscribe();
     };
-  }, [configured]);
+  }, [configured, refreshCredits]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -93,6 +137,9 @@ export default function LoginPage() {
 
         setUserEmail(data.user?.email ?? email);
         setLastSignInAt(data.user?.last_sign_in_at ?? "");
+        if (data.session?.access_token) {
+          void refreshCredits(data.session.access_token);
+        }
         setMessage("登录成功。现在可以开始把对话和报告保存到你的账户下。");
       } else {
         const { data, error: signUpError } = await supabase.auth.signUp({
@@ -108,6 +155,9 @@ export default function LoginPage() {
         if (data.session) {
           setUserEmail(data.user?.email ?? email);
           setLastSignInAt(data.user?.last_sign_in_at ?? "");
+          if (data.session.access_token) {
+            void refreshCredits(data.session.access_token);
+          }
           setMessage("注册并登录成功。现在可以开始使用阿U。");
         } else {
           setUserEmail("");
@@ -145,6 +195,7 @@ export default function LoginPage() {
 
       setUserEmail("");
       setLastSignInAt("");
+      setCreditBalance(null);
       setMessage("已退出登录。");
     } catch (authError) {
       setError(
@@ -235,6 +286,9 @@ export default function LoginPage() {
           {userEmail ? (
             <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
               当前已登录：{userEmail}
+              {typeof creditBalance === "number"
+                ? ` · 剩余 ${creditBalance} 点`
+                : ""}
             </div>
           ) : null}
 
@@ -365,6 +419,9 @@ export default function LoginPage() {
                   minute: "2-digit",
                 }).format(new Date(lastSignInAt))}
               </p>
+            ) : null}
+            {typeof creditBalance === "number" ? (
+              <p>当前剩余：{creditBalance} 点</p>
             ) : null}
             <p>金融内容仅供研究参考，不构成投资建议。</p>
           </div>

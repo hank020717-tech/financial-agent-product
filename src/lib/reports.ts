@@ -2,6 +2,7 @@ import {
   ChatMessage,
   completeWithContinuation,
   getDeepSeekConfig,
+  type TokenUsage,
 } from "@/lib/deepseek";
 
 export type ReportMode = "stock" | "industry" | "bp" | "roadshow";
@@ -115,6 +116,11 @@ export async function generateStructuredReport({
   const config = getDeepSeekConfig();
   const template = reportTemplates[mode];
   const generatedSections: string[] = [];
+  let usage: TokenUsage = {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+  };
 
   for (const [sectionIndex, section] of template.sections.entries()) {
     const messages: ChatMessage[] = [
@@ -139,6 +145,11 @@ export async function generateStructuredReport({
     });
 
     generatedSections.push(result.answer);
+    usage = {
+      promptTokens: usage.promptTokens + result.usage.promptTokens,
+      completionTokens: usage.completionTokens + result.usage.completionTokens,
+      totalTokens: usage.totalTokens + result.usage.totalTokens,
+    };
   }
 
   const report = [
@@ -153,5 +164,6 @@ export async function generateStructuredReport({
     report,
     sectionCount: generatedSections.length,
     model: config.model,
+    usage,
   };
 }

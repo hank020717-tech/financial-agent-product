@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   BarChart3,
@@ -108,6 +108,7 @@ export default function AgentPage() {
   const [copiedMessageKey, setCopiedMessageKey] = useState("");
   const [userId, setUserId] = useState("");
   const [userEmail, setUserEmail] = useState("");
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [historyStatus, setHistoryStatus] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -136,6 +137,39 @@ export default function AgentPage() {
     [messages],
   );
 
+  const refreshCredits = useCallback(async (token?: string) => {
+    if (!isSupabaseConfigured()) return;
+
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const accessToken =
+        token || (await supabase.auth.getSession()).data.session?.access_token;
+
+      if (!accessToken) {
+        setCreditBalance(null);
+        return;
+      }
+
+      const response = await fetch("/api/credits", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ accessToken }),
+      });
+
+      const data = (await response.json()) as {
+        balance?: number;
+      };
+
+      if (typeof data.balance === "number") {
+        setCreditBalance(data.balance);
+      }
+    } catch {
+      setCreditBalance(null);
+    }
+  }, []);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isSending, isGeneratingReport, isAnalyzingFile]);
@@ -150,17 +184,33 @@ export default function AgentPage() {
       setUserEmail(data.user?.email ?? "");
     });
 
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session?.access_token) {
+        void refreshCredits(data.session.access_token);
+      }
+    });
+
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserId(session?.user.id ?? "");
       setUserEmail(session?.user.email ?? "");
+      setCreditBalance(null);
       setConversationId(null);
       setHistoryStatus("");
+      if (session?.access_token) {
+        void refreshCredits(session.access_token);
+      }
     });
 
     return () => {
       listener.subscription.unsubscribe();
     };
-  }, []);
+  }, [refreshCredits]);
+
+  function syncCreditsFromResponse(credits?: { balance?: number }) {
+    if (typeof credits?.balance === "number") {
+      setCreditBalance(credits.balance);
+    }
+  }
 
   function buildExportFileName(content: string, extension: "md" | "txt") {
     const firstTitle =
@@ -314,7 +364,12 @@ export default function AgentPage() {
         knowledgeMatches?: unknown[];
         title?: string;
         toolUsed?: string;
+        credits?: {
+          balance?: number;
+        };
       };
+
+      syncCreditsFromResponse(data.credits);
 
       const assistantContent =
         data.answer ||
@@ -407,7 +462,12 @@ export default function AgentPage() {
         report?: string;
         error?: string;
         title?: string;
+        credits?: {
+          balance?: number;
+        };
       };
+
+      syncCreditsFromResponse(data.credits);
 
       const assistantContent =
         data.report ||
@@ -511,7 +571,12 @@ export default function AgentPage() {
         extractedCharacters?: number;
         knowledgeText?: string;
         title?: string;
+        credits?: {
+          balance?: number;
+        };
       };
+
+      syncCreditsFromResponse(data.credits);
 
       if (!response.ok || data.error) {
         throw new Error(data.error || `${modeTitle}失败，请稍后重试。`);
@@ -645,7 +710,7 @@ export default function AgentPage() {
               <h1 className="text-base font-semibold text-zinc-950">
                 阿U智能体
               </h1>
-              <p className="text-xs text-zinc-500">DeepSeek 金融研究助手</p>
+            <p className="text-xs text-zinc-500">金融研究助手</p>
             </div>
           </div>
 
@@ -832,7 +897,11 @@ export default function AgentPage() {
             <p className="mt-1 text-xs text-zinc-500">
               内容仅供研究参考，不构成投资建议。
               {userEmail
-                ? ` 已登录：${userEmail}${historyStatus ? ` · ${historyStatus}` : ""}`
+                ? ` 已登录：${userEmail}${
+                    typeof creditBalance === "number"
+                      ? ` · 剩余 ${creditBalance} 点`
+                      : ""
+                  }${historyStatus ? ` · ${historyStatus}` : ""}`
                 : " 登录后会自动保存对话和报告。"}
             </p>
           </div>

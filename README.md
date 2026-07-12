@@ -76,6 +76,9 @@ For the current Alibaba Cloud + Cloudflare production setup, see
 For production maintenance, backups, PM2 auto-start, and rollback steps, see
 `docs/operations-backup-checklist.md`.
 
+For the first-version credit balance and usage ledger, see
+`docs/credits-and-usage.md`.
+
 ## Acceptance
 
 See `docs/first-version-acceptance.md` for the first-version product test flow.
