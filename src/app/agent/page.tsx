@@ -40,6 +40,7 @@ type AgentIntent = ReportMode | "quote" | "chat" | "knowledge";
 type ReportModeConfig = {
   id: ReportMode;
   title: string;
+  cost: number;
   icon: typeof BarChart3;
   topicLabel: string;
   topicPlaceholder: string;
@@ -50,6 +51,7 @@ const reportModes: ReportModeConfig[] = [
   {
     id: "stock",
     title: "个股分析",
+    cost: 10,
     icon: BarChart3,
     topicLabel: "标的",
     topicPlaceholder: "例如：NVDA、贵州茅台、特斯拉",
@@ -58,6 +60,7 @@ const reportModes: ReportModeConfig[] = [
   {
     id: "industry",
     title: "行业研报",
+    cost: 20,
     icon: Building2,
     topicLabel: "行业",
     topicPlaceholder: "例如：AI 算力、新能源车、创新药",
@@ -66,6 +69,7 @@ const reportModes: ReportModeConfig[] = [
   {
     id: "bp",
     title: "BP 风险分析",
+    cost: 30,
     icon: ShieldAlert,
     topicLabel: "项目/公司",
     topicPlaceholder: "例如：某 AI 金融助手项目",
@@ -74,6 +78,7 @@ const reportModes: ReportModeConfig[] = [
   {
     id: "roadshow",
     title: "路演稿生成",
+    cost: 30,
     icon: Presentation,
     topicLabel: "项目/公司",
     topicPlaceholder: "例如：某智能投研平台",
@@ -81,11 +86,21 @@ const reportModes: ReportModeConfig[] = [
   },
 ];
 
-const fileAnalysisModes: Array<{ id: FileAnalysisMode; title: string }> = [
-  { id: "bp", title: "BP 风险分析" },
-  { id: "roadshow", title: "路演稿生成" },
-  { id: "contract", title: "合同审查" },
-  { id: "research", title: "研报解读" },
+const fileAnalysisModes: Array<{
+  id: FileAnalysisMode;
+  title: string;
+  cost: number;
+}> = [
+  { id: "bp", title: "BP 风险分析", cost: 40 },
+  { id: "roadshow", title: "路演稿生成", cost: 40 },
+  { id: "contract", title: "合同审查", cost: 40 },
+  { id: "research", title: "研报解读", cost: 40 },
+];
+
+const chatCreditCosts = [
+  { title: "普通对话", cost: 2 },
+  { title: "实时行情", cost: 2 },
+  { title: "资料记忆问答", cost: 3 },
 ];
 
 const starterPrompts = [
@@ -758,10 +773,37 @@ export default function AgentPage() {
                   }`}
                 >
                   <Icon className="h-4 w-4" aria-hidden="true" />
-                  <span className="text-sm font-semibold">{mode.title}</span>
+                  <span className="flex items-end justify-between gap-2">
+                    <span className="text-sm font-semibold">{mode.title}</span>
+                    <span className="shrink-0 text-xs font-medium text-emerald-700">
+                      {mode.cost} 点
+                    </span>
+                  </span>
                 </button>
               );
             })}
+          </div>
+
+          <div className="mt-4 rounded-lg border border-emerald-100 bg-emerald-50/70 px-3 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold text-emerald-900">点数规则</p>
+              <p className="text-xs text-emerald-700">按次消耗</p>
+            </div>
+            <div className="mt-2 grid gap-1.5 text-xs text-emerald-900">
+              {chatCreditCosts.map((item) => (
+                <div key={item.title} className="flex items-center justify-between gap-3">
+                  <span>{item.title}</span>
+                  <span className="font-medium">{item.cost} 点</span>
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-3">
+                <span>文件分析</span>
+                <span className="font-medium">40 点</span>
+              </div>
+            </div>
+            <p className="mt-2 text-[11px] leading-5 text-emerald-700">
+              生成报告和文件分析的具体价格已标在对应按钮上。
+            </p>
           </div>
 
           <div className="mt-4 space-y-3">
@@ -825,7 +867,10 @@ export default function AgentPage() {
                         : "border-zinc-200 bg-zinc-50 text-zinc-700 hover:border-emerald-200 hover:bg-emerald-50"
                     }`}
                   >
-                    {mode.title}
+                    <span>{mode.title}</span>
+                    <span className="ml-1 text-xs font-medium text-emerald-700">
+                      {mode.cost} 点
+                    </span>
                   </button>
                 );
               })}
