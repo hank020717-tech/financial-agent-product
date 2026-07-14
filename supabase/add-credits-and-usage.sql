@@ -38,7 +38,12 @@ using (auth.uid() = user_id);
 drop policy if exists "Users can create own credits" on public.user_credits;
 create policy "Users can create own credits"
 on public.user_credits for insert
-with check (auth.uid() = user_id);
+with check (
+  auth.uid() = user_id
+  and balance = 100
+  and lifetime_granted = 100
+  and lifetime_spent = 0
+);
 
 drop policy if exists "Users can read own AI usage logs" on public.ai_usage_logs;
 create policy "Users can read own AI usage logs"

@@ -4,8 +4,10 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   AlertCircle,
+  ArrowDownCircle,
   ArrowLeft,
   CheckCircle2,
+  Coins,
   History,
   KeyRound,
   Loader2,
@@ -13,6 +15,9 @@ import {
   LogOut,
   Mail,
   MessageSquareText,
+  RefreshCw,
+  ReceiptText,
+  ArrowUpCircle,
   UserPlus,
 } from "lucide-react";
 import {
@@ -22,6 +27,37 @@ import {
 
 type AuthMode = "signin" | "signup";
 
+type CreditTransaction = {
+  id: string;
+  kind: "grant" | "spend" | "refund" | "adjustment";
+  delta: number;
+  balance_after: number;
+  feature: string | null;
+  note: string | null;
+  created_at: string;
+};
+
+const creditFeatureLabels: Record<string, string> = {
+  chat: "普通对话",
+  quote: "实时行情",
+  knowledge: "资料记忆问答",
+  report_stock: "个股分析",
+  report_industry: "行业研报",
+  report_bp: "BP 风险分析",
+  report_roadshow: "路演稿生成",
+  file_bp: "文件 BP 风险分析",
+  file_roadshow: "文件路演稿生成",
+  file_contract: "合同审查",
+  file_research: "研报解读",
+};
+
+const creditKindLabels: Record<CreditTransaction["kind"], string> = {
+  grant: "获得点数",
+  spend: "功能消耗",
+  refund: "点数退回",
+  adjustment: "余额调整",
+};
+
 export default function LoginPage() {
   const [mode, setMode] = useState<AuthMode>("signin");
   const [email, setEmail] = useState("");
@@ -29,6 +65,10 @@ export default function LoginPage() {
   const [userEmail, setUserEmail] = useState("");
   const [lastSignInAt, setLastSignInAt] = useState("");
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  const [lifetimeGranted, setLifetimeGranted] = useState<number | null>(null);
+  const [lifetimeSpent, setLifetimeSpent] = useState<number | null>(null);
+  const [creditTransactions, setCreditTransactions] = useState<CreditTransaction[]>([]);
+  const [isRefreshingCredits, setIsRefreshingCredits] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -36,6 +76,8 @@ export default function LoginPage() {
 
   const refreshCredits = useCallback(async (token?: string) => {
     if (!configured) return;
+
+    setIsRefreshingCredits(true);
 
     try {
       const supabase = createSupabaseBrowserClient();
@@ -47,7 +89,7 @@ export default function LoginPage() {
         return;
       }
 
-      const response = await fetch("/api/credits", {
+      const response = await fetch("/api/credits/usage", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -57,13 +99,48 @@ export default function LoginPage() {
 
       const data = (await response.json()) as {
         balance?: number;
+        lifetimeGranted?: number;
+        lifetimeSpent?: number;
+        transactions?: CreditTransaction[];
       };
 
-      if (typeof data.balance === "number") {
-        setCreditBalance(data.balance);
+      if (response.ok) {
+        if (typeof data.balance === "number") setCreditBalance(data.balance);
+        if (typeof data.lifetimeGranted === "number") {
+          setLifetimeGranted(data.lifetimeGranted);
+        }
+        if (typeof data.lifetimeSpent === "number") {
+          setLifetimeSpent(data.lifetimeSpent);
+        }
+        setCreditTransactions(data.transactions ?? []);
+        return;
+      }
+
+      const fallbackResponse = await fetch("/api/credits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken }),
+      });
+      const fallbackData = (await fallbackResponse.json()) as {
+        balance?: number;
+        lifetimeGranted?: number;
+        lifetimeSpent?: number;
+      };
+
+      if (typeof fallbackData.balance === "number") {
+        setCreditBalance(fallbackData.balance);
+      }
+      if (typeof fallbackData.lifetimeGranted === "number") {
+        setLifetimeGranted(fallbackData.lifetimeGranted);
+      }
+      if (typeof fallbackData.lifetimeSpent === "number") {
+        setLifetimeSpent(fallbackData.lifetimeSpent);
       }
     } catch {
       setCreditBalance(null);
+      setCreditTransactions([]);
+    } finally {
+      setIsRefreshingCredits(false);
     }
   }, [configured]);
 
@@ -87,6 +164,9 @@ export default function LoginPage() {
       setUserEmail(session?.user.email ?? "");
       setLastSignInAt(session?.user.last_sign_in_at ?? "");
       setCreditBalance(null);
+      setLifetimeGranted(null);
+      setLifetimeSpent(null);
+      setCreditTransactions([]);
       if (session?.access_token) {
         void refreshCredits(session.access_token);
       }
@@ -196,6 +276,9 @@ export default function LoginPage() {
       setUserEmail("");
       setLastSignInAt("");
       setCreditBalance(null);
+      setLifetimeGranted(null);
+      setLifetimeSpent(null);
+      setCreditTransactions([]);
       setMessage("已退出登录。");
     } catch (authError) {
       setError(
@@ -288,7 +371,106 @@ export default function LoginPage() {
               当前已登录：{userEmail}
               {typeof creditBalance === "number"
                 ? ` · 剩余 ${creditBalance} 点`
-                : ""}
+              : ""}
+            </div>
+          ) : null}
+
+          {userEmail ? (
+            <div className="mt-4 rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Coins className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+                  <p className="text-sm font-semibold text-zinc-950">点数账户</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void refreshCredits()}
+                  disabled={isRefreshingCredits}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  title="刷新点数账户"
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${isRefreshingCredits ? "animate-spin" : ""}`}
+                    aria-hidden="true"
+                  />
+                  刷新
+                </button>
+              </div>
+
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <div className="rounded-lg bg-emerald-50 px-3 py-2">
+                  <p className="text-xs text-emerald-700">当前余额</p>
+                  <p className="mt-1 text-lg font-semibold text-emerald-900">
+                    {typeof creditBalance === "number" ? `${creditBalance} 点` : "--"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-zinc-50 px-3 py-2">
+                  <p className="text-xs text-zinc-500">累计获得</p>
+                  <p className="mt-1 text-lg font-semibold text-zinc-900">
+                    {typeof lifetimeGranted === "number" ? `${lifetimeGranted} 点` : "--"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-zinc-50 px-3 py-2">
+                  <p className="text-xs text-zinc-500">累计消耗</p>
+                  <p className="mt-1 text-lg font-semibold text-zinc-900">
+                    {typeof lifetimeSpent === "number" ? `${lifetimeSpent} 点` : "--"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center gap-2">
+                <ReceiptText className="h-4 w-4 text-zinc-500" aria-hidden="true" />
+                <p className="text-sm font-semibold text-zinc-900">最近流水</p>
+              </div>
+
+              {creditTransactions.length > 0 ? (
+                <div className="mt-2 divide-y divide-zinc-100 rounded-lg border border-zinc-100">
+                  {creditTransactions.slice(0, 8).map((transaction) => {
+                    const isSpend = transaction.delta < 0;
+                    const label =
+                      transaction.note ||
+                      creditFeatureLabels[transaction.feature ?? ""] ||
+                      creditKindLabels[transaction.kind];
+
+                    return (
+                      <div
+                        key={transaction.id}
+                        className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          {isSpend ? (
+                            <ArrowDownCircle className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true" />
+                          ) : (
+                            <ArrowUpCircle className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+                          )}
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-zinc-700">{label}</p>
+                            <p className="mt-0.5 text-zinc-400">
+                              {new Intl.DateTimeFormat("zh-CN", {
+                                month: "2-digit",
+                                day: "2-digit",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              }).format(new Date(transaction.created_at))}
+                            </p>
+                          </div>
+                        </div>
+                        <span
+                          className={`shrink-0 font-semibold ${
+                            isSpend ? "text-zinc-700" : "text-emerald-700"
+                          }`}
+                        >
+                          {isSpend ? "" : "+"}{transaction.delta} 点
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="mt-2 rounded-lg bg-zinc-50 px-3 py-3 text-xs leading-5 text-zinc-500">
+                  暂无点数流水。使用一次功能后，这里会显示消耗记录。
+                </p>
+              )}
             </div>
           ) : null}
 
