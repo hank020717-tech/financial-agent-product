@@ -138,6 +138,7 @@ export default function AgentPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastCreditTokenRef = useRef("");
 
   const activeMode =
     reportModes.find((mode) => mode.id === selectedMode) ?? reportModes[0];
@@ -162,8 +163,13 @@ export default function AgentPage() {
 
       if (!accessToken) {
         setCreditBalance(null);
+        lastCreditTokenRef.current = "";
         return;
       }
+
+      if (lastCreditTokenRef.current === accessToken) return;
+
+      lastCreditTokenRef.current = accessToken;
 
       const response = await fetch("/api/credits", {
         method: "POST",
@@ -209,6 +215,7 @@ export default function AgentPage() {
       setUserId(session?.user.id ?? "");
       setUserEmail(session?.user.email ?? "");
       setCreditBalance(null);
+      lastCreditTokenRef.current = "";
       setConversationId(null);
       setHistoryStatus("");
       if (session?.access_token) {

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowDownCircle,
@@ -69,15 +69,15 @@ export default function LoginPage() {
   const [lifetimeSpent, setLifetimeSpent] = useState<number | null>(null);
   const [creditTransactions, setCreditTransactions] = useState<CreditTransaction[]>([]);
   const [isRefreshingCredits, setIsRefreshingCredits] = useState(false);
+  const [creditError, setCreditError] = useState("");
+  const lastCreditTokenRef = useRef("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const configured = isSupabaseConfigured();
 
-  const refreshCredits = useCallback(async (token?: string) => {
+  const refreshCredits = useCallback(async (token?: string, force = false) => {
     if (!configured) return;
-
-    setIsRefreshingCredits(true);
 
     try {
       const supabase = createSupabaseBrowserClient();
@@ -89,56 +89,78 @@ export default function LoginPage() {
         return;
       }
 
-      const response = await fetch("/api/credits/usage", {
+      if (!force && lastCreditTokenRef.current === accessToken) return;
+
+      lastCreditTokenRef.current = accessToken;
+      setIsRefreshingCredits(true);
+      setCreditError("");
+
+      const balanceController = new AbortController();
+      const balanceTimeout = window.setTimeout(() => balanceController.abort(), 6000);
+      const response = await fetch("/api/credits", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ accessToken }),
+        signal: balanceController.signal,
       });
+      window.clearTimeout(balanceTimeout);
 
       const data = (await response.json()) as {
         balance?: number;
         lifetimeGranted?: number;
         lifetimeSpent?: number;
-        transactions?: CreditTransaction[];
+        error?: string;
       };
 
-      if (response.ok) {
-        if (typeof data.balance === "number") setCreditBalance(data.balance);
-        if (typeof data.lifetimeGranted === "number") {
-          setLifetimeGranted(data.lifetimeGranted);
-        }
-        if (typeof data.lifetimeSpent === "number") {
-          setLifetimeSpent(data.lifetimeSpent);
-        }
-        setCreditTransactions(data.transactions ?? []);
-        return;
+      if (!response.ok || typeof data.balance !== "number") {
+        throw new Error(data.error || "点数账户暂时无法加载。");
       }
 
-      const fallbackResponse = await fetch("/api/credits", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessToken }),
-      });
-      const fallbackData = (await fallbackResponse.json()) as {
-        balance?: number;
-        lifetimeGranted?: number;
-        lifetimeSpent?: number;
-      };
+      setCreditBalance(data.balance);
+      if (typeof data.lifetimeGranted === "number") setLifetimeGranted(data.lifetimeGranted);
+      if (typeof data.lifetimeSpent === "number") setLifetimeSpent(data.lifetimeSpent);
+      setIsRefreshingCredits(false);
 
-      if (typeof fallbackData.balance === "number") {
-        setCreditBalance(fallbackData.balance);
-      }
-      if (typeof fallbackData.lifetimeGranted === "number") {
-        setLifetimeGranted(fallbackData.lifetimeGranted);
-      }
-      if (typeof fallbackData.lifetimeSpent === "number") {
-        setLifetimeSpent(fallbackData.lifetimeSpent);
+      const usageController = new AbortController();
+      const usageTimeout = window.setTimeout(() => usageController.abort(), 8000);
+
+      try {
+        const usageResponse = await fetch("/api/credits/usage", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ accessToken }),
+          signal: usageController.signal,
+        });
+        window.clearTimeout(usageTimeout);
+
+        const usageData = (await usageResponse.json()) as {
+          lifetimeGranted?: number;
+          lifetimeSpent?: number;
+          transactions?: CreditTransaction[];
+        };
+
+        if (usageResponse.ok) {
+          if (typeof usageData.lifetimeGranted === "number") {
+            setLifetimeGranted(usageData.lifetimeGranted);
+          }
+          if (typeof usageData.lifetimeSpent === "number") {
+            setLifetimeSpent(usageData.lifetimeSpent);
+          }
+          setCreditTransactions(usageData.transactions ?? []);
+        } else {
+          setCreditTransactions([]);
+        }
+      } catch {
+        setCreditTransactions([]);
       }
     } catch {
       setCreditBalance(null);
       setCreditTransactions([]);
+      setCreditError("点数账户加载较慢，请稍后点击刷新。 ");
     } finally {
       setIsRefreshingCredits(false);
     }
@@ -384,7 +406,7 @@ export default function LoginPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => void refreshCredits()}
+                  onClick={() => void refreshCredits(undefined, true)}
                   disabled={isRefreshingCredits}
                   className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 transition hover:border-emerald-300 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                   title="刷新点数账户"
@@ -468,7 +490,7 @@ export default function LoginPage() {
                 </div>
               ) : (
                 <p className="mt-2 rounded-lg bg-zinc-50 px-3 py-3 text-xs leading-5 text-zinc-500">
-                  暂无点数流水。使用一次功能后，这里会显示消耗记录。
+                  {creditError || "暂无点数流水。使用一次功能后，这里会显示消耗记录。"}
                 </p>
               )}
             </div>
