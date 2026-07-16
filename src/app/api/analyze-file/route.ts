@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  checkApiRateLimit,
+  rateLimitResponse,
+  withApiTrace,
+} from "@/lib/api-runtime";
+import {
   ChatMessage,
   completeWithContinuation,
   getDeepSeekConfig,
@@ -94,7 +99,10 @@ ${extractedText}
 ---`;
 }
 
-export async function POST(request: NextRequest) {
+async function handlePost(
+  request: NextRequest,
+  trace: Parameters<Parameters<typeof withApiTrace>[1]>[1],
+) {
   let config: ReturnType<typeof getDeepSeekConfig>;
 
   try {
@@ -151,6 +159,16 @@ export async function POST(request: NextRequest) {
 
     if (!isAnalysisMode(mode)) {
       return NextResponse.json({ error: "请选择有效的文件分析类型。" }, { status: 400 });
+    }
+
+    const rateLimit = checkApiRateLimit({
+      key: `file-analysis:${authContext.user.id}`,
+      limit: 3,
+      windowMs: 5 * 60_000,
+    });
+
+    if (!rateLimit.allowed) {
+      return rateLimitResponse(rateLimit.retryAfterSeconds);
     }
 
     const feature = `file_${mode}` as CreditFeature;
@@ -218,6 +236,7 @@ export async function POST(request: NextRequest) {
         source: "file-analysis",
         fileName: file.name,
         fileSize: file.size,
+        requestId: trace.requestId,
       },
     });
 
@@ -230,7 +249,8 @@ export async function POST(request: NextRequest) {
       finishReason: result.finishReason,
       credits,
     });
-  } catch {
+  } catch (error) {
+    trace.error("file_analysis_failed", error);
     return NextResponse.json(
       {
         error: "文件分析失败，请稍后重试。",
@@ -239,3 +259,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withApiTrace("/api/analyze-file", handlePost);

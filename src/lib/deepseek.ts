@@ -25,6 +25,7 @@ type CompletionResult = {
 
 const deepSeekApiUrl = "https://api.deepseek.com/chat/completions";
 const defaultMaxOutputTokens = 4096;
+const deepSeekRequestTimeoutMs = 90_000;
 
 export function getDeepSeekConfig() {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -52,19 +53,30 @@ export async function callDeepSeek({
   maxTokens?: number;
   temperature?: number;
 }) {
-  const response = await fetch(deepSeekApiUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-    }),
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(deepSeekApiUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+      }),
+      signal: AbortSignal.timeout(deepSeekRequestTimeoutMs),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error("AI 服务响应超时，请稍后重试。", { cause: error });
+    }
+
+    throw error;
+  }
 
   const data = await response.json();
 

@@ -117,6 +117,34 @@ const initialMessage: ChatMessage = {
     "你好，我是阿U智能体。你可以直接聊天，也可以直接说“生成 NVDA 个股分析报告”“黄金现在多少钱”“写一版路演稿”。上传文件并完成分析后，我也能基于保存过的资料继续帮你追问和整理。",
 };
 
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("请求等待时间过长，已自动结束。请稍后重试。");
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function createClientRequestId() {
+  return crypto.randomUUID();
+}
+
 export default function AgentPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([initialMessage]);
   const [input, setInput] = useState("");
@@ -139,6 +167,7 @@ export default function AgentPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastCreditTokenRef = useRef("");
+  const activeRequestRef = useRef("");
 
   const activeMode =
     reportModes.find((mode) => mode.id === selectedMode) ?? reportModes[0];
@@ -171,13 +200,14 @@ export default function AgentPage() {
 
       lastCreditTokenRef.current = accessToken;
 
-      const response = await fetch("/api/credits", {
+      const response = await fetchWithTimeout("/api/credits", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-request-id": createClientRequestId(),
         },
         body: JSON.stringify({ accessToken }),
-      });
+      }, 8_000);
 
       const data = (await response.json()) as {
         balance?: number;
@@ -352,6 +382,10 @@ export default function AgentPage() {
   async function sendMessage(content: string) {
     const trimmedContent = content.trim();
     if (!trimmedContent || isBusy) return;
+    const requestId = createClientRequestId();
+
+    if (activeRequestRef.current) return;
+    activeRequestRef.current = requestId;
 
     const nextMessages: ChatMessage[] = [
       ...messages,
@@ -371,13 +405,14 @@ export default function AgentPage() {
         accessToken = data.session?.access_token;
       }
 
-      const response = await fetch("/api/chat", {
+      const response = await fetchWithTimeout("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-request-id": requestId,
         },
         body: JSON.stringify({ messages: nextMessages, accessToken }),
-      });
+      }, 180_000);
 
       const data = (await response.json()) as {
         answer?: string;
@@ -424,8 +459,11 @@ export default function AgentPage() {
           );
         });
       }
-    } catch {
-      const assistantContent = "连接智能体失败，请检查网络或稍后重试。";
+    } catch (error) {
+      const assistantContent =
+        error instanceof Error
+          ? error.message
+          : "连接智能体失败，请检查网络或稍后重试。";
 
       setMessages((currentMessages) => [
         ...currentMessages,
@@ -442,6 +480,9 @@ export default function AgentPage() {
         source: "chat-error",
       });
     } finally {
+      if (activeRequestRef.current === requestId) {
+        activeRequestRef.current = "";
+      }
       setIsSending(false);
       inputRef.current?.focus();
     }
@@ -450,6 +491,10 @@ export default function AgentPage() {
   async function generateReport() {
     const trimmedTopic = topic.trim();
     if (!trimmedTopic || isBusy) return;
+    const requestId = createClientRequestId();
+
+    if (activeRequestRef.current) return;
+    activeRequestRef.current = requestId;
 
     const userRequest = `${activeMode.title}：${trimmedTopic}`;
     setMessages((currentMessages) => [
@@ -467,10 +512,11 @@ export default function AgentPage() {
         accessToken = data.session?.access_token;
       }
 
-      const response = await fetch("/api/report", {
+      const response = await fetchWithTimeout("/api/report", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-request-id": requestId,
         },
         body: JSON.stringify({
           mode: selectedMode,
@@ -478,7 +524,7 @@ export default function AgentPage() {
           context,
           accessToken,
         }),
-      });
+      }, 290_000);
 
       const data = (await response.json()) as {
         report?: string;
@@ -512,8 +558,11 @@ export default function AgentPage() {
         reportType: selectedMode,
         source: "fixed-report",
       });
-    } catch {
-      const assistantContent = `${activeMode.title}生成失败，请检查网络或稍后重试。`;
+    } catch (error) {
+      const assistantContent =
+        error instanceof Error
+          ? `${activeMode.title}生成失败：${error.message}`
+          : `${activeMode.title}生成失败，请检查网络或稍后重试。`;
 
       setMessages((currentMessages) => [
         ...currentMessages,
@@ -530,12 +579,19 @@ export default function AgentPage() {
         source: "fixed-report-error",
       });
     } finally {
+      if (activeRequestRef.current === requestId) {
+        activeRequestRef.current = "";
+      }
       setIsGeneratingReport(false);
     }
   }
 
   async function analyzeFile() {
     if (!selectedFile || isBusy) return;
+    const requestId = createClientRequestId();
+
+    if (activeRequestRef.current) return;
+    activeRequestRef.current = requestId;
 
     const modeTitle =
       fileAnalysisModes.find((mode) => mode.id === selectedFileMode)?.title ||
@@ -582,10 +638,13 @@ export default function AgentPage() {
         }
       }
 
-      const response = await fetch("/api/analyze-file", {
+      const response = await fetchWithTimeout("/api/analyze-file", {
         method: "POST",
+        headers: {
+          "x-request-id": requestId,
+        },
         body: formData,
-      });
+      }, 290_000);
 
       const data = (await response.json()) as {
         analysis?: string;
@@ -701,6 +760,9 @@ export default function AgentPage() {
         source: "file-analysis-error",
       });
     } finally {
+      if (activeRequestRef.current === requestId) {
+        activeRequestRef.current = "";
+      }
       setIsAnalyzingFile(false);
     }
   }

@@ -1,8 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  checkApiRateLimit,
+  rateLimitResponse,
+  withApiTrace,
+} from "@/lib/api-runtime";
 import { getOrCreateCreditAccount } from "@/lib/supabase/credits";
 import { getAuthenticatedSupabaseUser } from "@/lib/supabase/server";
 
-export async function POST(request: NextRequest) {
+async function handlePost(
+  request: NextRequest,
+  trace: Parameters<Parameters<typeof withApiTrace>[1]>[1],
+) {
   let accessToken: string | undefined;
 
   try {
@@ -17,6 +25,16 @@ export async function POST(request: NextRequest) {
 
   try {
     const { supabase, user } = await getAuthenticatedSupabaseUser(accessToken);
+    const rateLimit = checkApiRateLimit({
+      key: `credit-usage:${user.id}`,
+      limit: 20,
+      windowMs: 60_000,
+    });
+
+    if (!rateLimit.allowed) {
+      return rateLimitResponse(rateLimit.retryAfterSeconds);
+    }
+
     const account = await getOrCreateCreditAccount({
       supabase,
       userId: user.id,
@@ -40,6 +58,7 @@ export async function POST(request: NextRequest) {
       transactions: transactions ?? [],
     });
   } catch (error) {
+    trace.error("credit_usage_failed", error);
     return NextResponse.json(
       {
         error:
@@ -49,3 +68,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withApiTrace("/api/credits/usage", handlePost);

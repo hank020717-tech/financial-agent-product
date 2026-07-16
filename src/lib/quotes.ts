@@ -136,7 +136,20 @@ export async function fetchTwelveDataQuote({
   url.searchParams.set("outputsize", "1");
   url.searchParams.set("apikey", apiKey);
 
-  const response = await fetch(url, { cache: "no-store" });
+  let response: Response;
+
+  try {
+    response = await fetch(url, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error("行情数据响应超时，请稍后重试。", { cause: error });
+    }
+
+    throw error;
+  }
   const data = await response.json();
 
   if (!response.ok || data.status === "error") {

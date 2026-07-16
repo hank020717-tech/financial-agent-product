@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withApiTrace } from "@/lib/api-runtime";
 import { getAuthenticatedSupabaseUser } from "@/lib/supabase/server";
 
-export async function POST(request: NextRequest) {
+async function handlePost(
+  request: NextRequest,
+  trace: Parameters<Parameters<typeof withApiTrace>[1]>[1],
+) {
   let body: {
     accessToken?: string;
     userId?: string;
@@ -50,10 +54,15 @@ export async function POST(request: NextRequest) {
       creditsGranted: result?.credits_granted ?? body.credits,
       transactionId: result?.transaction_id ?? null,
     });
-  } catch {
+  } catch (error) {
+    trace.error("admin_credit_grant_failed", error, {
+      targetUserId: body.userId,
+    });
     return NextResponse.json(
       { error: "管理员操作失败，请确认登录状态和 Supabase 数据库迁移。" },
       { status: 500 },
     );
   }
 }
+
+export const POST = withApiTrace("/api/admin/credits", handlePost);

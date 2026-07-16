@@ -18,6 +18,7 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 TWELVEDATA_API_KEY=
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+REPORT_CONCURRENCY=2
 ```
 
 ## Supabase 必做项
@@ -57,3 +58,6 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
 6. 追问“根据我上传过的资料，总结核心风险”。
 7. 打开历史记录，确认对话、报告、文件分析能查看、导出、删除。
 8. 退出登录后确认历史记录不可见。
+9. 打开 `/api/health`，确认返回 `status: ok`。
+10. 连续快速点击两次生成按钮，确认只执行一次、只扣一次点数。
+11. 使用 `pm2 logs financial-agent-product --lines 100`，确认能够看到请求耗时和状态码。

@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  checkApiRateLimit,
+  rateLimitResponse,
+  withApiTrace,
+} from "@/lib/api-runtime";
 import { fetchTwelveDataQuote, resolveQuoteTarget } from "@/lib/quotes";
 import {
   checkCredits,
@@ -7,7 +12,10 @@ import {
 } from "@/lib/supabase/credits";
 import { getAuthenticatedSupabaseUser } from "@/lib/supabase/server";
 
-export async function POST(request: NextRequest) {
+async function handlePost(
+  request: NextRequest,
+  trace: Parameters<Parameters<typeof withApiTrace>[1]>[1],
+) {
   let body: { query?: string; accessToken?: string };
 
   try {
@@ -52,6 +60,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const rateLimit = checkApiRateLimit({
+    key: `quote:${authContext.user.id}`,
+    limit: 30,
+    windowMs: 60_000,
+  });
+
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit.retryAfterSeconds);
+  }
+
   try {
     const creditCheck = await checkCredits({
       supabase: authContext.supabase,
@@ -89,11 +107,16 @@ export async function POST(request: NextRequest) {
       metadata: {
         source: "quote-api",
         symbol: target.symbol,
+        requestId: trace.requestId,
       },
     });
 
     return NextResponse.json({ quote, credits });
   } catch (error) {
+    trace.error("quote_failed", error, {
+      userId: authContext.user.id,
+      symbol: target.symbol,
+    });
     return NextResponse.json(
       {
         error:
@@ -103,3 +126,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withApiTrace("/api/quote", handlePost);

@@ -115,14 +115,12 @@ export async function generateStructuredReport({
 }) {
   const config = getDeepSeekConfig();
   const template = reportTemplates[mode];
-  const generatedSections: string[] = [];
-  let usage: TokenUsage = {
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-  };
+  const requestedConcurrency = Number(process.env.REPORT_CONCURRENCY || "2");
+  const concurrency = Number.isFinite(requestedConcurrency)
+    ? Math.min(3, Math.max(1, Math.floor(requestedConcurrency)))
+    : 2;
 
-  for (const [sectionIndex, section] of template.sections.entries()) {
+  const sectionJobs = template.sections.map((section, sectionIndex) => async () => {
     const messages: ChatMessage[] = [
       { role: "system", content: systemPrompt },
       {
@@ -144,13 +142,42 @@ export async function generateStructuredReport({
       maxContinuationRequests: 2,
     });
 
-    generatedSections.push(result.answer);
-    usage = {
-      promptTokens: usage.promptTokens + result.usage.promptTokens,
-      completionTokens: usage.completionTokens + result.usage.completionTokens,
-      totalTokens: usage.totalTokens + result.usage.totalTokens,
-    };
+    return result;
+  });
+
+  const sectionResults = new Array<Awaited<ReturnType<(typeof sectionJobs)[number]>>>(
+    sectionJobs.length,
+  );
+  let nextJobIndex = 0;
+
+  async function runWorker() {
+    while (nextJobIndex < sectionJobs.length) {
+      const jobIndex = nextJobIndex;
+      nextJobIndex += 1;
+      sectionResults[jobIndex] = await sectionJobs[jobIndex]();
+    }
   }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, sectionJobs.length) },
+      () => runWorker(),
+    ),
+  );
+
+  const generatedSections = sectionResults.map((result) => result.answer);
+  const usage = sectionResults.reduce<TokenUsage>(
+    (total, result) => ({
+      promptTokens: total.promptTokens + result.usage.promptTokens,
+      completionTokens: total.completionTokens + result.usage.completionTokens,
+      totalTokens: total.totalTokens + result.usage.totalTokens,
+    }),
+    {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+    },
+  );
 
   const report = [
     `# ${template.title}：${topic}`,

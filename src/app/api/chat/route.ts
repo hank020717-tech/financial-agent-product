@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  checkApiRateLimit,
+  rateLimitResponse,
+  withApiTrace,
+} from "@/lib/api-runtime";
+import {
   ChatMessage,
   completeWithContinuation,
   getDeepSeekConfig,
@@ -204,7 +209,10 @@ async function answerFromKnowledgeBase({
   };
 }
 
-export async function POST(request: NextRequest) {
+async function handlePost(
+  request: NextRequest,
+  trace: Parameters<Parameters<typeof withApiTrace>[1]>[1],
+) {
   let config: ReturnType<typeof getDeepSeekConfig>;
 
   try {
@@ -268,6 +276,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const rateLimit = checkApiRateLimit({
+    key: `chat:${authContext.user.id}`,
+    limit: 12,
+    windowMs: 60_000,
+  });
+
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit.retryAfterSeconds);
+  }
+
   const intent = resolveAgentIntent(latestUserMessage.content);
 
   try {
@@ -304,6 +322,7 @@ export async function POST(request: NextRequest) {
             metadata: {
               intent: "quote",
               source: "chat",
+              requestId: trace.requestId,
             },
           })
         : undefined;
@@ -341,6 +360,7 @@ export async function POST(request: NextRequest) {
             metadata: {
               intent: "knowledge",
               source: "chat",
+              requestId: trace.requestId,
             },
           })
         : undefined;
@@ -410,6 +430,7 @@ export async function POST(request: NextRequest) {
           intent: intent.mode,
           source: "chat-report",
           sectionCount: result.sectionCount,
+          requestId: trace.requestId,
         },
       });
 
@@ -449,6 +470,7 @@ export async function POST(request: NextRequest) {
       metadata: {
         intent: "chat",
         source: "chat",
+        requestId: trace.requestId,
       },
     });
 
@@ -459,7 +481,11 @@ export async function POST(request: NextRequest) {
       credits,
       intent: "chat",
     });
-  } catch {
+  } catch (error) {
+    trace.error("chat_failed", error, {
+      userId: authContext.user.id,
+      intent: intent.type,
+    });
     return NextResponse.json(
       {
         error: "连接智能体失败，请稍后重试。",
@@ -468,3 +494,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withApiTrace("/api/chat", handlePost);

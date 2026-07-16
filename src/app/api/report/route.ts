@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  checkApiRateLimit,
+  rateLimitResponse,
+  withApiTrace,
+} from "@/lib/api-runtime";
 import { generateStructuredReport, isReportMode } from "@/lib/reports";
 import {
   checkCredits,
@@ -8,7 +13,10 @@ import {
 } from "@/lib/supabase/credits";
 import { getAuthenticatedSupabaseUser } from "@/lib/supabase/server";
 
-export async function POST(request: NextRequest) {
+async function handlePost(
+  request: NextRequest,
+  trace: Parameters<Parameters<typeof withApiTrace>[1]>[1],
+) {
   let body: {
     mode?: string;
     topic?: string;
@@ -60,6 +68,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "请输入分析对象。" }, { status: 400 });
   }
 
+  const rateLimit = checkApiRateLimit({
+    key: `report:${authContext.user.id}`,
+    limit: 4,
+    windowMs: 60_000,
+  });
+
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit.retryAfterSeconds);
+  }
+
   try {
     const feature = `report_${mode}` as CreditFeature;
     const creditCheck = await checkCredits({
@@ -99,6 +117,7 @@ export async function POST(request: NextRequest) {
         intent: mode,
         source: "fixed-report",
         sectionCount: result.sectionCount,
+        requestId: trace.requestId,
       },
     });
 
@@ -109,7 +128,11 @@ export async function POST(request: NextRequest) {
       sectionCount: result.sectionCount,
       credits,
     });
-  } catch {
+  } catch (error) {
+    trace.error("report_failed", error, {
+      userId: authContext.user.id,
+      mode,
+    });
     return NextResponse.json(
       {
         error: "报告生成失败，请稍后重试。",
@@ -118,3 +141,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withApiTrace("/api/report", handlePost);
